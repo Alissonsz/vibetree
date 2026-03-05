@@ -79,4 +79,61 @@ describe("createReposClient", () => {
       id: null
     });
   });
+
+  it("reads and writes terminal startup command settings", async () => {
+    const invokeMock = vi.fn(
+      async <T,>(
+        command: string,
+        args?: Record<string, unknown>
+      ): Promise<T> => {
+        if (command === "get_global_terminal_startup_command") {
+          expect(args).toBeUndefined();
+          return "opencode" as unknown as T;
+        }
+
+        if (command === "set_global_terminal_startup_command") {
+          return undefined as unknown as T;
+        }
+
+        if (command === "list_repo_terminal_startup_commands") {
+          expect(args).toBeUndefined();
+          return { "repo-id": "tmux" } as unknown as T;
+        }
+
+        if (command === "set_repo_terminal_startup_command") {
+          return undefined as unknown as T;
+        }
+
+        throw new Error(`unexpected command: ${command}`);
+      }
+    );
+
+    const repos = createReposClient(invokeMock as unknown as RepoInvoker);
+
+    const globalCommand = await repos.getGlobalTerminalStartupCommand();
+    expect(globalCommand).toBe("opencode");
+
+    await repos.setGlobalTerminalStartupCommand("tmux");
+    const repoCommands = await repos.listRepoTerminalStartupCommands();
+    expect(repoCommands).toEqual({ "repo-id": "tmux" });
+
+    await repos.setRepoTerminalStartupCommand("repo-id", "npm run dev");
+    await repos.setRepoTerminalStartupCommand("repo-id", null);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "set_global_terminal_startup_command",
+      { command: "tmux" }
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      4,
+      "set_repo_terminal_startup_command",
+      { repoId: "repo-id", command: "npm run dev" }
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      5,
+      "set_repo_terminal_startup_command",
+      { repoId: "repo-id", command: null }
+    );
+  });
 });

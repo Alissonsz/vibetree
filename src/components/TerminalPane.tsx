@@ -11,7 +11,8 @@ type TerminalPaneProps = {
   onToggleChanges: () => void;
   selectedWorktreePath: string | null;
   selectedWorktree: WorktreeInfo | null;
-  startWithOpenCodeSession: boolean;
+  startupCommand: string | null;
+  startupConfigReady: boolean;
 };
 
 type SessionState = {
@@ -28,7 +29,8 @@ export default function TerminalPane({
   onToggleChanges,
   selectedWorktreePath,
   selectedWorktree,
-  startWithOpenCodeSession
+  startupCommand,
+  startupConfigReady
 }: TerminalPaneProps) {
   const terminalClient = useMemo(() => createTerminalClient(), []);
   const [sessionsByWorktree, setSessionsByWorktree] = useState<SessionsByWorktree>({});
@@ -47,7 +49,7 @@ export default function TerminalPane({
       try {
         const sessionId = await terminalClient.createSession(
           worktreePath,
-          startWithOpenCodeSession
+          startupCommand
         );
         const initialTitle = branchName?.replace("refs/heads/", "") || "Terminal";
         
@@ -66,17 +68,17 @@ export default function TerminalPane({
         setError("Unable to start terminal session.");
       }
     },
-    [startWithOpenCodeSession, terminalClient]
+    [startupCommand, terminalClient]
   );
 
   useEffect(() => {
-    if (!selectedWorktreePath || !selectedWorktree) return;
+    if (!startupConfigReady || !selectedWorktreePath || !selectedWorktree) return;
 
     const existingSessions = sessionsRef.current[selectedWorktreePath];
     if (!existingSessions || existingSessions.length === 0) {
       void createSession(selectedWorktreePath, selectedWorktree.branch || undefined);
     }
-  }, [selectedWorktreePath, selectedWorktree, createSession]);
+  }, [startupConfigReady, selectedWorktreePath, selectedWorktree, createSession]);
 
   const activeSessionId = selectedWorktreePath ? activeSessionIdByWorktree[selectedWorktreePath] : null;
 
@@ -225,6 +227,7 @@ export default function TerminalPane({
               className="text-subtext1 hover:text-text px-3 py-2 flex items-center justify-center transition-colors border-r border-surface0"
               onClick={() => void createSession(selectedWorktreePath, selectedWorktree?.branch || undefined)}
               title="New Terminal"
+              disabled={!startupConfigReady}
             >
               <div className="bg-surface0/50 hover:bg-surface1 p-1 rounded-md text-[10px] w-5 h-5 flex items-center justify-center text-subtext1 hover:text-text">+</div>
             </button>

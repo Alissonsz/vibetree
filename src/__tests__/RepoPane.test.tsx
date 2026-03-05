@@ -33,7 +33,12 @@ describe("RepoPane", () => {
       is_bare: false
     };
 
-    const setOpenCodeStart = vi.fn();
+    const setRepoStartupCommand = vi.fn(async () => {
+      return;
+    });
+    const setGlobalStartupCommand = vi.fn(async () => {
+      return;
+    });
 
     render(
       <RepoPane
@@ -53,8 +58,10 @@ describe("RepoPane", () => {
         onSelectWorktree={vi.fn()}
         onWorktreesChanged={vi.fn()}
         onDismissNotification={vi.fn()}
-        openCodeByRepoId={{}}
-        onSetOpenCodeStart={setOpenCodeStart}
+        globalStartupCommand="opencode"
+        repoStartupCommandsByRepoId={{}}
+        onSetRepoStartupCommand={setRepoStartupCommand}
+        onSetGlobalStartupCommand={setGlobalStartupCommand}
       />
     );
 
@@ -68,8 +75,13 @@ describe("RepoPane", () => {
 
     fireEvent.click(screen.getByTestId("repo-config-btn"));
     expect(screen.getByTestId("repo-config-menu")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("repo-opencode-toggle"));
-    expect(setOpenCodeStart).toHaveBeenCalledWith("repo-1", true);
+    fireEvent.change(screen.getByTestId("repo-startup-command-input"), {
+      target: { value: "tmux" }
+    });
+    fireEvent.click(screen.getByTestId("repo-save-workspace-startup-btn"));
+    expect(setRepoStartupCommand).toHaveBeenCalledWith("repo-1", "tmux");
+    fireEvent.click(screen.getByTestId("repo-save-global-startup-btn"));
+    expect(setGlobalStartupCommand).toHaveBeenCalledWith("tmux");
     expect(screen.getByTestId("remove-repo-btn")).toBeInTheDocument();
   });
 });

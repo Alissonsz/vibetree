@@ -9,6 +9,7 @@ import {
 
 import ChangesPane from "./ChangesPane";
 import { useAppState } from "../hooks/useAppState";
+import { createReposClient } from "../hooks/useRepos";
 import RepoPane from "./RepoPane";
 import TerminalPane from "./TerminalPane";
 
@@ -36,6 +37,8 @@ type DragState = {
 export default function Layout() {
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const startupConfigMutatedRef = useRef(false);
+  const reposClient = useMemo(() => createReposClient(), []);
 
   const [leftPx, setLeftPx] = useState(DEFAULT_LEFT_PX);
   const [rightPx, setRightPx] = useState(DEFAULT_RIGHT_PX);
@@ -43,7 +46,9 @@ export default function Layout() {
 
   const [repoOpen, setRepoOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
-  const [openCodeByRepoId, setOpenCodeByRepoId] = useState<Record<string, boolean>>({});
+  const [startupConfigLoaded, setStartupConfigLoaded] = useState(false);
+  const [globalTerminalStartupCommand, setGlobalTerminalStartupCommand] = useState<string | null>(null);
+  const [repoTerminalStartupByRepoId, setRepoTerminalStartupByRepoId] = useState<Record<string, string>>({});
 
   const {
     state,
@@ -53,6 +58,66 @@ export default function Layout() {
     setWorktrees,
     clearNotification
   } = useAppState();
+
+  const normalizeStartupCommand = useCallback((command: string | null) => {
+    if (command === null) return null;
+
+    const singleLine = command.replace(/[\r\n]+/g, " ");
+    const trimmed = singleLine.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTerminalStartupConfig() {
+      try {
+        const [globalCommand, repoCommands] = await Promise.all([
+          reposClient.getGlobalTerminalStartupCommand(),
+          reposClient.listRepoTerminalStartupCommands()
+        ]);
+
+        if (!active) return;
+        if (!startupConfigMutatedRef.current) {
+          setGlobalTerminalStartupCommand(normalizeStartupCommand(globalCommand));
+          setRepoTerminalStartupByRepoId(
+            Object.fromEntries(
+              Object.entries(repoCommands)
+                .map(([repoId, command]) => [repoId, normalizeStartupCommand(command)])
+                .filter((entry): entry is [string, string] => entry[1] !== null)
+            )
+          );
+        }
+      } catch {
+        return;
+      } finally {
+        if (active) {
+          setStartupConfigLoaded(true);
+        }
+      }
+    }
+
+    void loadTerminalStartupConfig();
+
+    return () => {
+      active = false;
+    };
+  }, [reposClient, normalizeStartupCommand]);
+
+  useEffect(() => {
+    const repoIdSet = new Set(state.repos.map((repo) => repo.id));
+    setRepoTerminalStartupByRepoId((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([repoId]) => repoIdSet.has(repoId))
+      );
+
+      if (Object.keys(next).length === Object.keys(current).length) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [state.repos]);
 
   const handleMouseMove = useCallback(
     (event: MouseEvent) => {
@@ -114,8 +179,9 @@ export default function Layout() {
     return worktrees.find((w) => w.path === state.selectedWorktreePath) || null;
   }, [state.selectedWorktreePath, state.selectedRepoId, state.worktreesByRepoId]);
 
-  const selectedRepoStartsWithOpenCode =
-    state.selectedRepoId !== null ? openCodeByRepoId[state.selectedRepoId] ?? false : false;
+  const selectedRepoStartupCommand =
+    state.selectedRepoId !== null ? repoTerminalStartupByRepoId[state.selectedRepoId] ?? null : null;
+  const resolvedStartupCommand = selectedRepoStartupCommand ?? globalTerminalStartupCommand;
 
   return (
     <div className={`relative h-full w-full overflow-hidden ${isDragging ? "cursor-col-resize select-none" : ""}`}>
@@ -145,9 +211,30 @@ export default function Layout() {
           onSelectWorktree={selectWorktree}
           onWorktreesChanged={setWorktrees}
           onDismissNotification={clearNotification}
-          openCodeByRepoId={openCodeByRepoId}
-          onSetOpenCodeStart={(repoId: string, enabled: boolean) => {
-            setOpenCodeByRepoId((current) => ({ ...current, [repoId]: enabled }));
+          globalStartupCommand={globalTerminalStartupCommand ?? ""}
+          repoStartupCommandsByRepoId={repoTerminalStartupByRepoId}
+          onSetRepoStartupCommand={async (repoId: string, command: string | null) => {
+            startupConfigMutatedRef.current = true;
+            const normalized = normalizeStartupCommand(command);
+            const globalNormalized = normalizeStartupCommand(globalTerminalStartupCommand);
+            const nextRepoOverride = normalized === globalNormalized ? null : normalized;
+
+            await reposClient.setRepoTerminalStartupCommand(repoId, nextRepoOverride);
+            setRepoTerminalStartupByRepoId((current) => {
+              const next = { ...current };
+              if (nextRepoOverride === null) {
+                delete next[repoId];
+              } else {
+                next[repoId] = nextRepoOverride;
+              }
+              return next;
+            });
+          }}
+          onSetGlobalStartupCommand={async (command: string | null) => {
+            startupConfigMutatedRef.current = true;
+            const normalized = normalizeStartupCommand(command);
+            await reposClient.setGlobalTerminalStartupCommand(normalized);
+            setGlobalTerminalStartupCommand(normalized);
           }}
         />
 
@@ -163,7 +250,8 @@ export default function Layout() {
           onToggleChanges={() => setChangesOpen(!changesOpen)}
           selectedWorktreePath={state.selectedWorktreePath}
           selectedWorktree={selectedWorktree}
-          startWithOpenCodeSession={selectedRepoStartsWithOpenCode}
+          startupCommand={resolvedStartupCommand}
+          startupConfigReady={startupConfigLoaded}
         />
 
         <div

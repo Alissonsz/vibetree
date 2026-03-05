@@ -9,12 +9,13 @@ use tauri::Manager;
 
 use changes::get_changed_files;
 use repo::{
-    add_repo, get_last_selection, list_repos, load_registry_or_default, remove_repo,
-    set_last_selection,
+    add_repo, get_global_terminal_startup_command, get_last_selection,
+    list_repo_terminal_startup_commands, list_repos, load_registry_or_default, remove_repo,
+    set_global_terminal_startup_command, set_last_selection, set_repo_terminal_startup_command,
 };
 use terminal::{
-    close_terminal_session, create_terminal_session, list_terminal_sessions, resize_terminal_session, write_terminal_input,
-    TerminalManager,
+    close_terminal_session, create_terminal_session, list_terminal_sessions,
+    resize_terminal_session, write_terminal_input, TerminalManager,
 };
 use worktree::{list_worktrees, start_watching_repo, stop_watching_repo, WorktreeService};
 
@@ -37,6 +38,10 @@ pub fn run() {
             list_repos,
             get_last_selection,
             set_last_selection,
+            get_global_terminal_startup_command,
+            set_global_terminal_startup_command,
+            list_repo_terminal_startup_commands,
+            set_repo_terminal_startup_command,
             get_changed_files,
             create_terminal_session,
             close_terminal_session,

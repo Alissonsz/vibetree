@@ -1,4 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,6 +12,8 @@ use uuid::Uuid;
 const STORE_FILE: &str = "repo_registry.json";
 const STORE_REPOS_KEY: &str = "repos";
 const STORE_LAST_SELECTION_KEY: &str = "last_selection";
+const STORE_GLOBAL_TERMINAL_STARTUP_COMMAND_KEY: &str = "global_terminal_startup_command";
+const STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY: &str = "repo_terminal_startup_commands";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoInfo {
@@ -24,12 +26,16 @@ pub struct RepoInfo {
 pub struct RepoRegistry {
     repos: Vec<RepoInfo>,
     last_selection: Option<String>,
+    global_terminal_startup_command: Option<String>,
+    repo_terminal_startup_commands: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct RepoRegistryStore {
     repos: Vec<RepoInfo>,
     last_selection: Option<String>,
+    global_terminal_startup_command: Option<String>,
+    repo_terminal_startup_commands: HashMap<String, String>,
 }
 
 trait RepoEnvironment {
@@ -85,9 +91,35 @@ impl RepoRegistry {
             .map_err(|error| format!("failed to parse stored selection: {error}"))?
             .unwrap_or(None);
 
+        let global_terminal_startup_command = store
+            .get(STORE_GLOBAL_TERMINAL_STARTUP_COMMAND_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse global terminal startup command: {error}"))?
+            .unwrap_or(None);
+
+        let repo_terminal_startup_commands: HashMap<String, String> = store
+            .get(STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse repo terminal startup commands: {error}"))?
+            .unwrap_or_default();
+
+        let global_terminal_startup_command =
+            normalize_startup_command(global_terminal_startup_command);
+        let repo_terminal_startup_commands: HashMap<String, String> =
+            repo_terminal_startup_commands
+                .into_iter()
+                .filter_map(|(repo_id, command)| {
+                    normalize_startup_command(Some(command)).map(|normalized| (repo_id, normalized))
+                })
+                .collect();
+
         Ok(Self {
             repos,
             last_selection,
+            global_terminal_startup_command,
+            repo_terminal_startup_commands,
         })
     }
 
@@ -112,6 +144,8 @@ impl RepoRegistry {
             self.last_selection = None;
         }
 
+        self.repo_terminal_startup_commands.remove(repo_id);
+
         Ok(())
     }
 
@@ -131,6 +165,41 @@ impl RepoRegistry {
         Ok(())
     }
 
+    pub fn get_global_terminal_startup_command(&self) -> Option<String> {
+        self.global_terminal_startup_command.clone()
+    }
+
+    pub fn set_global_terminal_startup_command(&mut self, command: Option<String>) {
+        self.global_terminal_startup_command = normalize_startup_command(command);
+    }
+
+    pub fn list_repo_terminal_startup_commands(&self) -> HashMap<String, String> {
+        self.repo_terminal_startup_commands.clone()
+    }
+
+    pub fn set_repo_terminal_startup_command(
+        &mut self,
+        repo_id: &str,
+        command: Option<String>,
+    ) -> Result<(), String> {
+        let repo_exists = self.repos.iter().any(|repo| repo.id == repo_id);
+        if !repo_exists {
+            return Err(format!("repository '{repo_id}' was not found"));
+        }
+
+        match normalize_startup_command(command) {
+            Some(normalized) => {
+                self.repo_terminal_startup_commands
+                    .insert(repo_id.to_string(), normalized);
+            }
+            None => {
+                self.repo_terminal_startup_commands.remove(repo_id);
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn persist<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), String> {
         let store = app
             .store_builder(STORE_FILE)
@@ -140,6 +209,8 @@ impl RepoRegistry {
         let payload = RepoRegistryStore {
             repos: self.repos.clone(),
             last_selection: self.last_selection.clone(),
+            global_terminal_startup_command: self.global_terminal_startup_command.clone(),
+            repo_terminal_startup_commands: self.repo_terminal_startup_commands.clone(),
         };
 
         store.set(
@@ -151,6 +222,18 @@ impl RepoRegistry {
             STORE_LAST_SELECTION_KEY,
             serde_json::to_value(payload.last_selection)
                 .map_err(|error| format!("failed to serialize last selection: {error}"))?,
+        );
+        store.set(
+            STORE_GLOBAL_TERMINAL_STARTUP_COMMAND_KEY,
+            serde_json::to_value(payload.global_terminal_startup_command).map_err(|error| {
+                format!("failed to serialize global terminal startup command: {error}")
+            })?,
+        );
+        store.set(
+            STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY,
+            serde_json::to_value(payload.repo_terminal_startup_commands).map_err(|error| {
+                format!("failed to serialize repo terminal startup commands: {error}")
+            })?,
         );
         store
             .save()
@@ -249,6 +332,57 @@ pub fn set_last_selection(
     let mut registry = lock_registry(&state)?;
     registry.set_last_selection(id)?;
     registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn get_global_terminal_startup_command(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<Option<String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.get_global_terminal_startup_command())
+}
+
+#[tauri::command]
+pub fn set_global_terminal_startup_command(
+    command: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_global_terminal_startup_command(command);
+    registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn list_repo_terminal_startup_commands(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<HashMap<String, String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.list_repo_terminal_startup_commands())
+}
+
+#[tauri::command]
+pub fn set_repo_terminal_startup_command(
+    repo_id: String,
+    command: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_repo_terminal_startup_command(&repo_id, command)?;
+    registry.persist(&app)
+}
+
+fn normalize_startup_command(command: Option<String>) -> Option<String> {
+    command.and_then(|value| {
+        let single_line = value.replace(['\r', '\n'], " ");
+        let trimmed = single_line.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 fn stable_repo_id(canonical_path: &str) -> String {
@@ -359,6 +493,50 @@ mod tests {
 
         assert!(remove_result.is_ok());
         assert!(registry.list_repos().is_empty());
+    }
+
+    #[test]
+    fn set_repo_terminal_startup_command_requires_existing_repo() {
+        let mut registry = RepoRegistry::default();
+
+        let result = registry
+            .set_repo_terminal_startup_command("repo-missing", Some("opencode".to_string()));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_repo_terminal_startup_command_sets_and_clears_override() {
+        let mut registry = RepoRegistry::default();
+        let environment = MockRepoEnvironment::new().add_path("./repo", "/tmp/repo", true);
+        let added = registry
+            .add_repo_with_environment("./repo", &environment)
+            .expect("repo should be inserted");
+
+        let set_result =
+            registry.set_repo_terminal_startup_command(&added.id, Some(" tmux new ".to_string()));
+        assert!(set_result.is_ok());
+
+        let commands = registry.list_repo_terminal_startup_commands();
+        assert_eq!(commands.get(&added.id), Some(&"tmux new".to_string()));
+
+        let clear_result = registry.set_repo_terminal_startup_command(&added.id, None);
+        assert!(clear_result.is_ok());
+        assert!(registry.list_repo_terminal_startup_commands().is_empty());
+    }
+
+    #[test]
+    fn set_global_terminal_startup_command_normalizes_blank_values() {
+        let mut registry = RepoRegistry::default();
+
+        registry.set_global_terminal_startup_command(Some("  opencode  ".to_string()));
+        assert_eq!(
+            registry.get_global_terminal_startup_command(),
+            Some("opencode".to_string())
+        );
+
+        registry.set_global_terminal_startup_command(Some("   ".to_string()));
+        assert_eq!(registry.get_global_terminal_startup_command(), None);
     }
 
     #[test]
