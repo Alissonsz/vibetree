@@ -42,11 +42,28 @@ pub struct TerminalManager {
     sessions: HashMap<String, TerminalSession>,
 }
 
+fn write_startup_command(
+    writer: &mut dyn Write,
+    start_with_open_code_session: bool,
+) -> Result<(), String> {
+    if !start_with_open_code_session {
+        return Ok(());
+    }
+
+    writer
+        .write_all(b"opencode\n")
+        .map_err(|error| format!("failed to start OpenCode session: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("failed to flush OpenCode startup command: {error}"))
+}
+
 impl TerminalManager {
     pub fn create_session(
         &mut self,
         worktree_path: String,
         app: Option<AppHandle>,
+        start_with_opencode_session: bool,
     ) -> Result<String, String> {
         let path = Path::new(&worktree_path);
         if !path.exists() {
@@ -92,10 +109,12 @@ impl TerminalManager {
             .master
             .try_clone_reader()
             .map_err(|error| format!("failed to get pty reader: {error}"))?;
-        let writer = pair
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|error| format!("failed to get pty writer: {error}"))?;
+
+        write_startup_command(&mut writer, start_with_opencode_session)?;
 
         let session_id = format!("term-{}", uuid::Uuid::new_v4());
         let reader = Arc::new(Mutex::new(reader));
@@ -261,11 +280,12 @@ pub fn create_terminal_session(
     app: AppHandle,
     manager: State<'_, Mutex<TerminalManager>>,
     worktree_path: String,
+    start_with_open_code_session: bool,
 ) -> Result<String, String> {
     let mut manager = manager
         .lock()
         .map_err(|_| "terminal manager lock poisoned".to_string())?;
-    manager.create_session(worktree_path, Some(app))
+    manager.create_session(worktree_path, Some(app), start_with_open_code_session)
 }
 
 #[tauri::command]
@@ -316,12 +336,12 @@ pub fn list_terminal_sessions(
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalManager;
+    use super::{write_startup_command, TerminalManager};
 
     #[test]
     fn create_session_with_valid_path_succeeds() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/tmp".to_string(), None);
+        let result = manager.create_session("/tmp".to_string(), None, false);
 
         assert!(result.is_ok());
 
@@ -343,7 +363,7 @@ mod tests {
     #[test]
     fn create_session_with_invalid_path_fails() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/path/does/not/exist".to_string(), None);
+        let result = manager.create_session("/path/does/not/exist".to_string(), None, false);
 
         assert!(result.is_err());
     }
@@ -354,5 +374,25 @@ mod tests {
         let result = manager.close_session("term-missing");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn startup_command_is_written_when_open_code_flag_is_enabled() {
+        let mut writer = Vec::new();
+
+        let result = write_startup_command(&mut writer, true);
+
+        assert!(result.is_ok());
+        assert_eq!(writer, b"opencode\n");
+    }
+
+    #[test]
+    fn startup_command_is_not_written_when_open_code_flag_is_disabled() {
+        let mut writer = Vec::new();
+
+        let result = write_startup_command(&mut writer, false);
+
+        assert!(result.is_ok());
+        assert!(writer.is_empty());
     }
 }

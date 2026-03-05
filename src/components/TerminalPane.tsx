@@ -11,6 +11,7 @@ type TerminalPaneProps = {
   onToggleChanges: () => void;
   selectedWorktreePath: string | null;
   selectedWorktree: WorktreeInfo | null;
+  startWithOpenCodeSession: boolean;
 };
 
 type SessionState = {
@@ -26,7 +27,8 @@ export default function TerminalPane({
   onToggleRepo,
   onToggleChanges,
   selectedWorktreePath,
-  selectedWorktree
+  selectedWorktree,
+  startWithOpenCodeSession
 }: TerminalPaneProps) {
   const terminalClient = useMemo(() => createTerminalClient(), []);
   const [sessionsByWorktree, setSessionsByWorktree] = useState<SessionsByWorktree>({});
@@ -43,7 +45,10 @@ export default function TerminalPane({
     async (worktreePath: string, branchName?: string) => {
       setError(null);
       try {
-        const sessionId = await terminalClient.createSession(worktreePath);
+        const sessionId = await terminalClient.createSession(
+          worktreePath,
+          startWithOpenCodeSession
+        );
         const initialTitle = branchName?.replace("refs/heads/", "") || "Terminal";
         
         setSessionsByWorktree((prev) => {
@@ -61,7 +66,7 @@ export default function TerminalPane({
         setError("Unable to start terminal session.");
       }
     },
-    [terminalClient]
+    [startWithOpenCodeSession, terminalClient]
   );
 
   useEffect(() => {
@@ -150,7 +155,7 @@ export default function TerminalPane({
 
   return (
     <section
-      className="flex flex-col bg-base h-full"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-base"
       data-testid="terminal-pane"
       role="main"
       aria-label="Terminal"

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorktreeChanges } from "../hooks/useWorktrees";
 import type { RepoInfo, WorktreeInfo } from "../types";
@@ -16,6 +16,8 @@ type RepoPaneProps = {
   onSelectWorktree: (repoId: string, worktreePath: string) => void;
   onWorktreesChanged?: (repoId: string, worktrees: WorktreeInfo[]) => void;
   onDismissNotification?: () => void;
+  openCodeByRepoId: Record<string, boolean>;
+  onSetOpenCodeStart: (repoId: string, enabled: boolean) => void;
 };
 
 type RepoWatchProps = {
@@ -48,11 +50,39 @@ export default function RepoPane({
   onRemoveRepo,
   onSelectWorktree,
   onWorktreesChanged,
-  onDismissNotification
+  onDismissNotification,
+  openCodeByRepoId,
+  onSetOpenCodeStart
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
+  const [configRepoId, setConfigRepoId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!configRepoId) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-repo-config-root='true']")) return;
+      setConfigRepoId(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setConfigRepoId(null);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [configRepoId]);
 
   const toggleExpanded = (repoId: string) => {
     setExpandedRepos((current) => ({
@@ -84,7 +114,7 @@ export default function RepoPane({
   return (
     <aside
       id="wb-repo-pane"
-      className={`flex flex-col bg-base border-r border-surface0 h-full ${
+      className={`flex h-full min-h-0 flex-col overflow-hidden bg-base border-r border-surface0 ${
         mobileOpen ? "fixed inset-y-0 left-0 w-4/5 z-50 shadow-2xl" : "hidden md:flex"
       }`}
       data-testid="repo-pane"
@@ -139,23 +169,75 @@ export default function RepoPane({
 
               return (
                 <div key={repo.id} data-testid={`repo-item-${repo.id}`}>
-                  <div className="flex items-center justify-between group px-2 py-1 mb-1">
+                  <div className="flex items-center justify-between group px-2 py-1 mb-1 relative min-h-7">
                     <button
                       type="button"
-                      className="text-xs font-semibold uppercase tracking-wider text-text flex items-center gap-2"
+                      className="text-xs font-semibold uppercase tracking-wider text-text inline-flex items-center gap-2 min-w-0 h-6 leading-none"
                       onClick={() => toggleExpanded(repo.id)}
                     >
-                      {repo.name} <span className="text-subtext1 text-[10px] normal-case">({worktrees.length})</span>
+                      <span className="truncate">{repo.name}</span>
+                      <span className="inline-flex h-6 items-center text-subtext1 text-[10px] normal-case leading-none">
+                        ({worktrees.length})
+                      </span>
                     </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 text-subtext1 hover:text-red text-xs transition-opacity"
-                      data-testid="remove-repo-btn"
-                      onClick={() => void handleRemoveRepo(repo.id)}
-                      aria-label={`Remove ${repo.name}`}
-                    >
-                      Remove
-                    </button>
+                    <div className="relative ml-2 flex h-6 items-center" data-repo-config-root="true">
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded text-sm leading-none text-subtext1 transition-colors hover:bg-surface0/50 hover:text-text"
+                        data-testid="repo-config-btn"
+                        aria-label={`Configure ${repo.name}`}
+                        aria-expanded={configRepoId === repo.id}
+                        aria-controls={`repo-config-menu-${repo.id}`}
+                        title="Workspace configuration"
+                        onClick={() => {
+                          setConfigRepoId((current) => (current === repo.id ? null : repo.id));
+                        }}
+                      >
+                        ⚙
+                      </button>
+
+                      {configRepoId === repo.id ? (
+                        <div
+                          id={`repo-config-menu-${repo.id}`}
+                          data-testid="repo-config-menu"
+                          className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-surface0 bg-mantle p-1 shadow-xl"
+                          role="menu"
+                          aria-label={`${repo.name} workspace options`}
+                        >
+                          <label
+                            className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-xs text-subtext1 hover:bg-surface0/60"
+                            data-testid="repo-opencode-toggle"
+                          >
+                            <span className="truncate">OpenCode Start</span>
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5 accent-blue"
+                              checked={openCodeByRepoId[repo.id] ?? false}
+                              onChange={(event) => {
+                                onSetOpenCodeStart(repo.id, event.target.checked);
+                              }}
+                              aria-label={`Enable OpenCode start for ${repo.name}`}
+                            />
+                          </label>
+
+                          <div className="my-1 h-px bg-surface0" />
+
+                          <button
+                            type="button"
+                            className="w-full rounded px-2 py-1.5 text-left text-xs text-red hover:bg-surface0/60"
+                            data-testid="remove-repo-btn"
+                            role="menuitem"
+                            onClick={() => {
+                              setConfigRepoId(null);
+                              void handleRemoveRepo(repo.id);
+                            }}
+                            aria-label={`Remove ${repo.name}`}
+                          >
+                            Remove workspace
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   {expanded && (
