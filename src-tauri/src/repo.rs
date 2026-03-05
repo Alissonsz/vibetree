@@ -1,0 +1,384 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Runtime, State};
+use tauri_plugin_store::StoreExt;
+use uuid::Uuid;
+
+const STORE_FILE: &str = "repo_registry.json";
+const STORE_REPOS_KEY: &str = "repos";
+const STORE_LAST_SELECTION_KEY: &str = "last_selection";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoInfo {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Default)]
+pub struct RepoRegistry {
+    repos: Vec<RepoInfo>,
+    last_selection: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RepoRegistryStore {
+    repos: Vec<RepoInfo>,
+    last_selection: Option<String>,
+}
+
+trait RepoEnvironment {
+    fn canonicalize(&self, path: &str) -> Result<PathBuf, String>;
+    fn is_git_repo(&self, path: &Path) -> Result<bool, String>;
+}
+
+struct SystemRepoEnvironment;
+
+impl RepoEnvironment for SystemRepoEnvironment {
+    fn canonicalize(&self, path: &str) -> Result<PathBuf, String> {
+        std::fs::canonicalize(path)
+            .map_err(|error| format!("failed to canonicalize path '{path}': {error}"))
+    }
+
+    fn is_git_repo(&self, path: &Path) -> Result<bool, String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .arg("rev-parse")
+            .arg("--is-inside-work-tree")
+            .output()
+            .map_err(|error| format!("failed to run git command: {error}"))?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .map_err(|error| format!("invalid git command output: {error}"))?;
+        Ok(stdout.trim() == "true")
+    }
+}
+
+impl RepoRegistry {
+    pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<Self, String> {
+        let store = app
+            .store_builder(STORE_FILE)
+            .build()
+            .map_err(|error| format!("failed to open store: {error}"))?;
+
+        let repos = store
+            .get(STORE_REPOS_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse stored repositories: {error}"))?
+            .unwrap_or_default();
+
+        let last_selection = store
+            .get(STORE_LAST_SELECTION_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse stored selection: {error}"))?
+            .unwrap_or(None);
+
+        Ok(Self {
+            repos,
+            last_selection,
+        })
+    }
+
+    pub fn list_repos(&self) -> Vec<RepoInfo> {
+        self.repos.clone()
+    }
+
+    pub fn add_repo(&mut self, raw_path: &str) -> Result<RepoInfo, String> {
+        let environment = SystemRepoEnvironment;
+        self.add_repo_with_environment(raw_path, &environment)
+    }
+
+    pub fn remove_repo(&mut self, repo_id: &str) -> Result<(), String> {
+        let before = self.repos.len();
+        self.repos.retain(|repo| repo.id != repo_id);
+
+        if self.repos.len() == before {
+            return Err(format!("repository '{repo_id}' was not found"));
+        }
+
+        if self.last_selection.as_deref() == Some(repo_id) {
+            self.last_selection = None;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_last_selection(&self) -> Option<String> {
+        self.last_selection.clone()
+    }
+
+    pub fn set_last_selection(&mut self, repo_id: Option<String>) -> Result<(), String> {
+        if let Some(value) = repo_id.as_deref() {
+            let exists = self.repos.iter().any(|repo| repo.id == value);
+            if !exists {
+                return Err(format!("repository '{value}' was not found"));
+            }
+        }
+
+        self.last_selection = repo_id;
+        Ok(())
+    }
+
+    pub fn persist<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), String> {
+        let store = app
+            .store_builder(STORE_FILE)
+            .build()
+            .map_err(|error| format!("failed to open store: {error}"))?;
+
+        let payload = RepoRegistryStore {
+            repos: self.repos.clone(),
+            last_selection: self.last_selection.clone(),
+        };
+
+        store.set(
+            STORE_REPOS_KEY,
+            serde_json::to_value(payload.repos)
+                .map_err(|error| format!("failed to serialize repositories: {error}"))?,
+        );
+        store.set(
+            STORE_LAST_SELECTION_KEY,
+            serde_json::to_value(payload.last_selection)
+                .map_err(|error| format!("failed to serialize last selection: {error}"))?,
+        );
+        store
+            .save()
+            .map_err(|error| format!("failed to save store: {error}"))
+    }
+
+    fn add_repo_with_environment<E: RepoEnvironment>(
+        &mut self,
+        raw_path: &str,
+        environment: &E,
+    ) -> Result<RepoInfo, String> {
+        let canonical_path = environment.canonicalize(raw_path)?;
+        if !environment.is_git_repo(&canonical_path)? {
+            return Err(format!(
+                "path '{}' is not a git repository",
+                canonical_path.display()
+            ));
+        }
+
+        let canonical = canonical_path.to_string_lossy().to_string();
+        let duplicate = self.repos.iter().any(|repo| repo.path == canonical);
+        if duplicate {
+            return Err(format!("repository '{}' is already registered", canonical));
+        }
+
+        let name = canonical_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| canonical.clone());
+
+        let info = RepoInfo {
+            id: stable_repo_id(&canonical),
+            path: canonical,
+            name,
+        };
+
+        self.repos.push(info.clone());
+        Ok(info)
+    }
+}
+
+pub fn load_registry_or_default<R: Runtime>(app: &AppHandle<R>) -> RepoRegistry {
+    RepoRegistry::load(app).unwrap_or_default()
+}
+
+fn lock_registry<'a>(
+    state: &'a State<'_, Mutex<RepoRegistry>>,
+) -> Result<std::sync::MutexGuard<'a, RepoRegistry>, String> {
+    state
+        .lock()
+        .map_err(|error| format!("failed to lock repository state: {error}"))
+}
+
+#[tauri::command]
+pub fn add_repo(
+    path: String,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<RepoInfo, String> {
+    let mut registry = lock_registry(&state)?;
+    let repo = registry.add_repo(&path)?;
+    registry.persist(&app)?;
+    Ok(repo)
+}
+
+#[tauri::command]
+pub fn remove_repo(
+    id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.remove_repo(&id)?;
+    registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn list_repos(state: State<'_, Mutex<RepoRegistry>>) -> Result<Vec<RepoInfo>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.list_repos())
+}
+
+#[tauri::command]
+pub fn get_last_selection(state: State<'_, Mutex<RepoRegistry>>) -> Result<Option<String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.get_last_selection())
+}
+
+#[tauri::command]
+pub fn set_last_selection(
+    id: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_last_selection(id)?;
+    registry.persist(&app)
+}
+
+fn stable_repo_id(canonical_path: &str) -> String {
+    let mut hasher_a = DefaultHasher::new();
+    canonical_path.hash(&mut hasher_a);
+
+    let mut hasher_b = DefaultHasher::new();
+    "vibetree".hash(&mut hasher_b);
+    canonical_path.hash(&mut hasher_b);
+
+    let value = ((hasher_a.finish() as u128) << 64) | hasher_b.finish() as u128;
+    Uuid::from_u128(value).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    use super::{RepoEnvironment, RepoRegistry};
+
+    struct MockRepoEnvironment {
+        canonical_paths: HashMap<String, PathBuf>,
+        git_paths: HashMap<PathBuf, bool>,
+    }
+
+    impl MockRepoEnvironment {
+        fn new() -> Self {
+            Self {
+                canonical_paths: HashMap::new(),
+                git_paths: HashMap::new(),
+            }
+        }
+
+        fn add_path(mut self, input: &str, canonical: &str, is_git_repo: bool) -> Self {
+            let canonical_path = PathBuf::from(canonical);
+            self.canonical_paths
+                .insert(input.to_string(), canonical_path.clone());
+            self.git_paths.insert(canonical_path, is_git_repo);
+            self
+        }
+    }
+
+    impl RepoEnvironment for MockRepoEnvironment {
+        fn canonicalize(&self, path: &str) -> Result<PathBuf, String> {
+            self.canonical_paths
+                .get(path)
+                .cloned()
+                .ok_or_else(|| format!("missing canonical mock for '{path}'"))
+        }
+
+        fn is_git_repo(&self, path: &Path) -> Result<bool, String> {
+            Ok(*self.git_paths.get(path).unwrap_or(&false))
+        }
+    }
+
+    #[test]
+    fn add_valid_repo_path_succeeds() {
+        let mut registry = RepoRegistry::default();
+        let environment = MockRepoEnvironment::new().add_path("./repo", "/tmp/repo", true);
+
+        let result = registry.add_repo_with_environment("./repo", &environment);
+
+        assert!(result.is_ok());
+        let repos = registry.list_repos();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].path, "/tmp/repo");
+        assert_eq!(repos[0].name, "repo");
+    }
+
+    #[test]
+    fn add_duplicate_canonical_path_fails() {
+        let mut registry = RepoRegistry::default();
+        let environment = MockRepoEnvironment::new()
+            .add_path("./repo", "/tmp/repo", true)
+            .add_path("/tmp/../tmp/repo", "/tmp/repo", true);
+
+        let first = registry.add_repo_with_environment("./repo", &environment);
+        assert!(first.is_ok());
+
+        let second = registry.add_repo_with_environment("/tmp/../tmp/repo", &environment);
+
+        assert!(second.is_err());
+        assert_eq!(registry.list_repos().len(), 1);
+    }
+
+    #[test]
+    fn add_non_git_path_fails() {
+        let mut registry = RepoRegistry::default();
+        let environment =
+            MockRepoEnvironment::new().add_path("./not-a-repo", "/tmp/not-a-repo", false);
+
+        let result = registry.add_repo_with_environment("./not-a-repo", &environment);
+
+        assert!(result.is_err());
+        assert!(registry.list_repos().is_empty());
+    }
+
+    #[test]
+    fn remove_repo_by_id_succeeds() {
+        let mut registry = RepoRegistry::default();
+        let environment = MockRepoEnvironment::new().add_path("./repo", "/tmp/repo", true);
+        let added = registry
+            .add_repo_with_environment("./repo", &environment)
+            .expect("repo should be inserted");
+
+        let remove_result = registry.remove_repo(&added.id);
+
+        assert!(remove_result.is_ok());
+        assert!(registry.list_repos().is_empty());
+    }
+
+    #[test]
+    fn list_repositories_returns_all_entries() {
+        let mut registry = RepoRegistry::default();
+        let environment = MockRepoEnvironment::new()
+            .add_path("./repo-a", "/tmp/repo-a", true)
+            .add_path("./repo-b", "/tmp/repo-b", true);
+
+        let first = registry
+            .add_repo_with_environment("./repo-a", &environment)
+            .expect("first repo should be inserted");
+        let second = registry
+            .add_repo_with_environment("./repo-b", &environment)
+            .expect("second repo should be inserted");
+
+        let repos = registry.list_repos();
+
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0].id, first.id);
+        assert_eq!(repos[1].id, second.id);
+    }
+}

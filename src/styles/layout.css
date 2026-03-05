@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@theme {
+  --color-crust: #11111b;
+  --color-mantle: #181825;
+  --color-base: #1e1e2e;
+  --color-surface0: #313244;
+  --color-surface1: #45475a;
+  --color-surface2: #585b70;
+  
+  --color-text: #cdd6f4;
+  --color-subtext0: #a6adc8;
+  --color-subtext1: #bac2de;
+  
+  --color-blue: #89b4fa;
+  --color-green: #a6e3a1;
+  --color-red: #f38ba8;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: var(--color-base);
+  color: var(--color-text);
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+#root {
+  height: 100%;
+}
+
+.wbNoSelect {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.wbSplitter {
+  width: 100%;
+  cursor: col-resize;
+  background-color: var(--color-base);
+  position: relative;
+  transition: background-color 0.2s;
+  z-index: 10;
+}
+
+.wbSplitter::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background-color: var(--color-surface0);
+  transform: translateX(-50%);
+  transition: background-color 0.2s;
+}
+
+.wbSplitter:hover::before,
+.wbSplitter:active::before {
+  background-color: var(--color-blue);
+}
+
+.wbSplitter::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+
+/* Custom scrollbar for a sleek IDE feel */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #313244;
+  border: 3px solid #1e1e2e;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #45475a;
+}
