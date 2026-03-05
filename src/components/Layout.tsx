@@ -38,6 +38,7 @@ export default function Layout() {
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const startupConfigMutatedRef = useRef(false);
+  const globalStartupSaveInFlightRef = useRef(false);
   const reposClient = useMemo(() => createReposClient(), []);
 
   const [leftPx, setLeftPx] = useState(DEFAULT_LEFT_PX);
@@ -47,6 +48,8 @@ export default function Layout() {
   const [repoOpen, setRepoOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [startupConfigLoaded, setStartupConfigLoaded] = useState(false);
+  const [startupConfigError, setStartupConfigError] = useState<string | null>(null);
+  const [isGlobalStartupSaving, setIsGlobalStartupSaving] = useState(false);
   const [globalTerminalStartupCommand, setGlobalTerminalStartupCommand] = useState<string | null>(null);
   const [repoTerminalStartupByRepoId, setRepoTerminalStartupByRepoId] = useState<Record<string, string>>({});
 
@@ -84,12 +87,17 @@ export default function Layout() {
             Object.fromEntries(
               Object.entries(repoCommands)
                 .map(([repoId, command]) => [repoId, normalizeStartupCommand(command)])
-                .filter((entry): entry is [string, string] => entry[1] !== null)
+              .filter((entry): entry is [string, string] => entry[1] !== null)
             )
           );
         }
+        setStartupConfigError(null);
       } catch {
-        return;
+        if (active) {
+          setStartupConfigError(
+            "Unable to load terminal startup configuration. Using defaults until settings are saved again."
+          );
+        }
       } finally {
         if (active) {
           setStartupConfigLoaded(true);
@@ -206,11 +214,13 @@ export default function Layout() {
           selectedWorktreePath={state.selectedWorktreePath}
           worktreesByRepoId={state.worktreesByRepoId}
           notification={state.notification}
+          startupConfigError={startupConfigError}
           onAddRepo={addRepository}
           onRemoveRepo={removeRepository}
           onSelectWorktree={selectWorktree}
           onWorktreesChanged={setWorktrees}
           onDismissNotification={clearNotification}
+          isGlobalStartupSaving={isGlobalStartupSaving}
           globalStartupCommand={globalTerminalStartupCommand ?? ""}
           repoStartupCommandsByRepoId={repoTerminalStartupByRepoId}
           onSetRepoStartupCommand={async (repoId: string, command: string | null) => {
@@ -229,12 +239,25 @@ export default function Layout() {
               }
               return next;
             });
+            setStartupConfigError(null);
           }}
           onSetGlobalStartupCommand={async (command: string | null) => {
+            if (globalStartupSaveInFlightRef.current) {
+              return;
+            }
+
+            globalStartupSaveInFlightRef.current = true;
+            setIsGlobalStartupSaving(true);
             startupConfigMutatedRef.current = true;
             const normalized = normalizeStartupCommand(command);
-            await reposClient.setGlobalTerminalStartupCommand(normalized);
-            setGlobalTerminalStartupCommand(normalized);
+            try {
+              await reposClient.setGlobalTerminalStartupCommand(normalized);
+              setGlobalTerminalStartupCommand(normalized);
+              setStartupConfigError(null);
+            } finally {
+              globalStartupSaveInFlightRef.current = false;
+              setIsGlobalStartupSaving(false);
+            }
           }}
         />
 
