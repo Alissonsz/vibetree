@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import RepoPane from "../components/RepoPane";
@@ -59,5 +59,11 @@ describe("RepoPane", () => {
     expect(screen.getByTestId("repo-item-repo-1")).toBeInTheDocument();
     expect(screen.getByTestId("repo-config-btn")).toBeInTheDocument();
     expect(screen.getByTestId("worktree-item")).toHaveTextContent("main");
+    expect(screen.queryByTestId("repo-config-menu")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("remove-repo-btn")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("repo-config-btn"));
+    expect(screen.getByTestId("repo-config-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("remove-repo-btn")).toBeInTheDocument();
   });
 });
