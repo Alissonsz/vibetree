@@ -249,10 +249,6 @@ export default function RepoPane({
                           setConfigRepoId((current) => (current === repo.id ? null : repo.id));
                           if (isOpening) {
                             setStartupDraftByRepoId((current) => {
-                              if (current[repo.id] !== undefined) {
-                                return current;
-                              }
-
                               return {
                                 ...current,
                                 [repo.id]:

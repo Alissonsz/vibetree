@@ -199,4 +199,78 @@ describe("RepoPane", () => {
     expect(globalSaveButton).toBeDisabled();
     expect(globalSaveButton).toHaveTextContent("Saving global...");
   });
+
+  it("refreshes workspace input from effective command when reopening config", () => {
+    const repo1: RepoInfo = {
+      id: "repo-1",
+      path: "/tmp/repo-1",
+      name: "repo-1"
+    };
+    const repo2: RepoInfo = {
+      id: "repo-2",
+      path: "/tmp/repo-2",
+      name: "repo-2"
+    };
+
+    const worktree1: WorktreeInfo = {
+      path: "/tmp/repo-1",
+      head: "abc",
+      branch: "main",
+      is_bare: false
+    };
+    const worktree2: WorktreeInfo = {
+      path: "/tmp/repo-2",
+      head: "def",
+      branch: "main",
+      is_bare: false
+    };
+
+    const baseProps = {
+      mobileOpen: false,
+      onRequestClose: vi.fn(),
+      repos: [repo1, repo2],
+      worktreesByRepoId: { [repo1.id]: [worktree1], [repo2.id]: [worktree2] },
+      selectedRepoId: repo2.id,
+      selectedWorktreePath: worktree2.path,
+      notification: null,
+      onAddRepo: vi.fn(async () => {
+        return;
+      }),
+      onRemoveRepo: vi.fn(async () => {
+        return;
+      }),
+      onSelectWorktree: vi.fn(),
+      onWorktreesChanged: vi.fn(),
+      onDismissNotification: vi.fn(),
+      repoStartupCommandsByRepoId: {},
+      onSetRepoStartupCommand: vi.fn(async () => {
+        return;
+      }),
+      onSetGlobalStartupCommand: vi.fn(async () => {
+        return;
+      })
+    };
+
+    const { rerender } = render(
+      <RepoPane
+        {...baseProps}
+        globalStartupCommand="tmux"
+      />
+    );
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[1]);
+    expect(screen.getByTestId("repo-startup-command-input")).toHaveValue("tmux");
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[1]);
+
+    rerender(
+      <RepoPane
+        {...baseProps}
+        globalStartupCommand="opencode"
+      />
+    );
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[1]);
+    expect(screen.getByTestId("repo-startup-command-input")).toHaveValue("opencode");
+  });
 });
