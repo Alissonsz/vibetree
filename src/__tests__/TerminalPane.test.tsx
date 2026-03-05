@@ -61,14 +61,15 @@ describe("TerminalPane", () => {
         onToggleChanges={vi.fn()}
         selectedWorktreePath="/tmp/repo-a"
         selectedWorktree={worktree}
-        startWithOpenCodeSession={true}
+        startupCommand="opencode"
+        startupConfigReady={true}
       />
     );
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("create_terminal_session", {
         worktreePath: "/tmp/repo-a",
-        startWithOpenCodeSession: true
+        startupCommand: "opencode"
       });
     });
 

@@ -12,6 +12,10 @@ export type ReposClient = {
   listRepos: () => Promise<RepoInfo[]>;
   getLastSelection: () => Promise<string | null>;
   setLastSelection: (id: string | null) => Promise<void>;
+  getGlobalTerminalStartupCommand: () => Promise<string | null>;
+  setGlobalTerminalStartupCommand: (command: string | null) => Promise<void>;
+  listRepoTerminalStartupCommands: () => Promise<Record<string, string>>;
+  setRepoTerminalStartupCommand: (repoId: string, command: string | null) => Promise<void>;
 };
 
 export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
@@ -20,7 +24,15 @@ export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
     removeRepo: (id) => invokeFn<void>("remove_repo", { id }),
     listRepos: () => invokeFn<RepoInfo[]>("list_repos"),
     getLastSelection: () => invokeFn<string | null>("get_last_selection"),
-    setLastSelection: (id) => invokeFn<void>("set_last_selection", { id })
+    setLastSelection: (id) => invokeFn<void>("set_last_selection", { id }),
+    getGlobalTerminalStartupCommand: () =>
+      invokeFn<string | null>("get_global_terminal_startup_command"),
+    setGlobalTerminalStartupCommand: (command) =>
+      invokeFn<void>("set_global_terminal_startup_command", { command }),
+    listRepoTerminalStartupCommands: () =>
+      invokeFn<Record<string, string>>("list_repo_terminal_startup_commands"),
+    setRepoTerminalStartupCommand: (repoId, command) =>
+      invokeFn<void>("set_repo_terminal_startup_command", { repoId, command })
   };
 }
 

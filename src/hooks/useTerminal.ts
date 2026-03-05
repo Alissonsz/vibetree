@@ -23,7 +23,7 @@ export type TerminalInvoker = <T>(
 ) => Promise<T>;
 
 export type TerminalClient = {
-  createSession: (worktreePath: string, startWithOpenCodeSession?: boolean) => Promise<string>;
+  createSession: (worktreePath: string, startupCommand?: string | null) => Promise<string>;
   closeSession: (sessionId: string) => Promise<void>;
   writeInput: (sessionId: string, data: string) => Promise<void>;
   resizeSession: (sessionId: string, rows: number, cols: number) => Promise<void>;
@@ -34,10 +34,10 @@ export function createTerminalClient(
   invokeFn: TerminalInvoker = invoke
 ): TerminalClient {
   return {
-    createSession: (worktreePath, startWithOpenCodeSession = false) =>
+    createSession: (worktreePath, startupCommand = null) =>
       invokeFn<string>("create_terminal_session", {
         worktreePath,
-        startWithOpenCodeSession
+        startupCommand
       }),
     closeSession: (sessionId) =>
       invokeFn<void>("close_terminal_session", { sessionId }),

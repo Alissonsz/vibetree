@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorktreeChanges } from "../hooks/useWorktrees";
 import type { RepoInfo, WorktreeInfo } from "../types";
@@ -11,13 +11,17 @@ type RepoPaneProps = {
   selectedWorktreePath: string | null;
   worktreesByRepoId: Record<string, WorktreeInfo[]>;
   notification?: string | null;
+  startupConfigError?: string | null;
   onAddRepo: (path: string) => Promise<unknown>;
   onRemoveRepo: (repoId: string) => Promise<void>;
   onSelectWorktree: (repoId: string, worktreePath: string) => void;
   onWorktreesChanged?: (repoId: string, worktrees: WorktreeInfo[]) => void;
   onDismissNotification?: () => void;
-  openCodeByRepoId: Record<string, boolean>;
-  onSetOpenCodeStart: (repoId: string, enabled: boolean) => void;
+  isGlobalStartupSaving?: boolean;
+  globalStartupCommand: string;
+  repoStartupCommandsByRepoId: Record<string, string>;
+  onSetRepoStartupCommand: (repoId: string, command: string | null) => Promise<void>;
+  onSetGlobalStartupCommand: (command: string | null) => Promise<void>;
 };
 
 type RepoWatchProps = {
@@ -46,18 +50,26 @@ export default function RepoPane({
   selectedWorktreePath,
   worktreesByRepoId,
   notification,
+  startupConfigError,
   onAddRepo,
   onRemoveRepo,
   onSelectWorktree,
   onWorktreesChanged,
   onDismissNotification,
-  openCodeByRepoId,
-  onSetOpenCodeStart
+  isGlobalStartupSaving = false,
+  globalStartupCommand,
+  repoStartupCommandsByRepoId,
+  onSetRepoStartupCommand,
+  onSetGlobalStartupCommand
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
   const [configRepoId, setConfigRepoId] = useState<string | null>(null);
+  const [startupDraftByRepoId, setStartupDraftByRepoId] = useState<Record<string, string>>({});
+  const [startupSaveErrorByRepoId, setStartupSaveErrorByRepoId] = useState<Record<string, string>>({});
+  const [startupSavingByRepoId, setStartupSavingByRepoId] = useState<Record<string, boolean>>({});
+  const startupSaveInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!configRepoId) return;
@@ -111,6 +123,38 @@ export default function RepoPane({
     await onRemoveRepo(repoId);
   }
 
+  function runStartupSave(repoId: string, operation: () => Promise<void>) {
+    if (startupSaveInFlightRef.current.has(repoId)) {
+      return;
+    }
+
+    startupSaveInFlightRef.current.add(repoId);
+    setStartupSaveErrorByRepoId((current) => {
+      const next = { ...current };
+      delete next[repoId];
+      return next;
+    });
+    setStartupSavingByRepoId((current) => ({
+      ...current,
+      [repoId]: true
+    }));
+
+    void operation()
+      .catch(() => {
+        setStartupSaveErrorByRepoId((current) => ({
+          ...current,
+          [repoId]: "Unable to save startup command."
+        }));
+      })
+      .finally(() => {
+        startupSaveInFlightRef.current.delete(repoId);
+        setStartupSavingByRepoId((current) => ({
+          ...current,
+          [repoId]: false
+        }));
+      });
+  }
+
   return (
     <aside
       id="wb-repo-pane"
@@ -157,6 +201,16 @@ export default function RepoPane({
           </div>
         )}
 
+        {startupConfigError ? (
+          <div
+            className="bg-yellow/10 text-yellow p-3 rounded-md mb-4 text-sm mx-2"
+            data-testid="startup-config-error"
+            role="status"
+          >
+            {startupConfigError}
+          </div>
+        ) : null}
+
         {repos.length === 0 ? (
           <div className="p-4 text-subtext1 text-sm text-center">
             Add a workspace to get started.
@@ -166,6 +220,7 @@ export default function RepoPane({
             {repos.map((repo) => {
               const worktrees = worktreesByRepoId[repo.id] || [];
               const expanded = isExpanded(repo.id);
+              const isStartupSaving = startupSavingByRepoId[repo.id] ?? false;
 
               return (
                 <div key={repo.id} data-testid={`repo-item-${repo.id}`}>
@@ -190,7 +245,17 @@ export default function RepoPane({
                         aria-controls={`repo-config-menu-${repo.id}`}
                         title="Workspace configuration"
                         onClick={() => {
+                          const isOpening = configRepoId !== repo.id;
                           setConfigRepoId((current) => (current === repo.id ? null : repo.id));
+                          if (isOpening) {
+                            setStartupDraftByRepoId((current) => {
+                              return {
+                                ...current,
+                                [repo.id]:
+                                  repoStartupCommandsByRepoId[repo.id] ?? globalStartupCommand
+                              };
+                            });
+                          }
                         }}
                       >
                         ⚙
@@ -200,25 +265,104 @@ export default function RepoPane({
                         <div
                           id={`repo-config-menu-${repo.id}`}
                           data-testid="repo-config-menu"
-                          className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-surface0 bg-mantle p-1 shadow-xl"
+                          className="absolute right-0 top-full z-30 mt-1 w-72 rounded-md border border-surface0 bg-mantle p-2 shadow-xl"
                           role="menu"
                           aria-label={`${repo.name} workspace options`}
                         >
-                          <label
-                            className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-xs text-subtext1 hover:bg-surface0/60"
-                            data-testid="repo-opencode-toggle"
-                          >
-                            <span className="truncate">OpenCode Start</span>
+                          <div className="rounded px-2 py-1.5 text-xs text-subtext1">
+                            <p className="text-[11px] uppercase tracking-wide text-subtext1/80">Terminal startup</p>
+                            <p className="mt-1 text-[11px] text-subtext1/80">
+                              {Object.prototype.hasOwnProperty.call(repoStartupCommandsByRepoId, repo.id)
+                                ? "Workspace override active."
+                                : globalStartupCommand
+                                  ? "Using global default unless you override."
+                                  : "No startup command configured."}
+                            </p>
                             <input
-                              type="checkbox"
-                              className="h-3.5 w-3.5 accent-blue"
-                              checked={openCodeByRepoId[repo.id] ?? false}
+                              type="text"
+                              data-testid="repo-startup-command-input"
+                              className="mt-2 w-full rounded border border-surface0 bg-base px-2 py-1.5 text-xs text-text placeholder:text-subtext1/60 focus:border-blue focus:outline-none"
+                              placeholder="opencode, tmux, npm run dev..."
+                              value={
+                                startupDraftByRepoId[repo.id] ??
+                                repoStartupCommandsByRepoId[repo.id] ??
+                                globalStartupCommand
+                              }
                               onChange={(event) => {
-                                onSetOpenCodeStart(repo.id, event.target.checked);
+                                const value = event.target.value;
+                                setStartupDraftByRepoId((current) => ({
+                                  ...current,
+                                  [repo.id]: value
+                                }));
                               }}
-                              aria-label={`Enable OpenCode start for ${repo.name}`}
+                              aria-label={`Startup command for ${repo.name}`}
+                              disabled={isStartupSaving}
                             />
-                          </label>
+                            <div className="mt-2 flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                data-testid="repo-save-workspace-startup-btn"
+                                onClick={() => {
+                                  const command =
+                                    startupDraftByRepoId[repo.id] ??
+                                    repoStartupCommandsByRepoId[repo.id] ??
+                                    globalStartupCommand;
+                                  runStartupSave(repo.id, () =>
+                                    onSetRepoStartupCommand(repo.id, command)
+                                  );
+                                }}
+                                disabled={isStartupSaving}
+                              >
+                                Save workspace
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                data-testid="repo-save-global-startup-btn"
+                                onClick={() => {
+                                  const command =
+                                    startupDraftByRepoId[repo.id] ??
+                                    repoStartupCommandsByRepoId[repo.id] ??
+                                    globalStartupCommand;
+                                  runStartupSave(repo.id, () =>
+                                    onSetGlobalStartupCommand(command)
+                                  );
+                                }}
+                                disabled={isStartupSaving || isGlobalStartupSaving}
+                              >
+                                {isGlobalStartupSaving ? "Saving global..." : "Save global"}
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              className="mt-2 rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                              data-testid="repo-use-global-startup-btn"
+                              disabled={
+                                isStartupSaving ||
+                                !Object.prototype.hasOwnProperty.call(repoStartupCommandsByRepoId, repo.id)
+                              }
+                              onClick={() => {
+                                runStartupSave(repo.id, async () => {
+                                  await onSetRepoStartupCommand(repo.id, null);
+                                  setStartupDraftByRepoId((current) => ({
+                                    ...current,
+                                    [repo.id]: globalStartupCommand
+                                  }));
+                                });
+                              }}
+                            >
+                              {isStartupSaving ? "Saving..." : "Use global default"}
+                            </button>
+                            {startupSaveErrorByRepoId[repo.id] ? (
+                              <p
+                                className="mt-2 text-[11px] text-red"
+                                data-testid="repo-startup-save-error"
+                              >
+                                {startupSaveErrorByRepoId[repo.id]}
+                              </p>
+                            ) : null}
+                          </div>
 
                           <div className="my-1 h-px bg-surface0" />
 

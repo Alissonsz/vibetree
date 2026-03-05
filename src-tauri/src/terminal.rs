@@ -44,18 +44,26 @@ pub struct TerminalManager {
 
 fn write_startup_command(
     writer: &mut dyn Write,
-    start_with_open_code_session: bool,
+    startup_command: Option<String>,
 ) -> Result<(), String> {
-    if !start_with_open_code_session {
+    let Some(command) = startup_command.and_then(|value| {
+        let single_line = value.replace(['\r', '\n'], " ");
+        let trimmed = single_line.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) else {
         return Ok(());
-    }
+    };
 
     writer
-        .write_all(b"opencode\n")
-        .map_err(|error| format!("failed to start OpenCode session: {error}"))?;
+        .write_all(format!("{command}\n").as_bytes())
+        .map_err(|error| format!("failed to run startup command: {error}"))?;
     writer
         .flush()
-        .map_err(|error| format!("failed to flush OpenCode startup command: {error}"))
+        .map_err(|error| format!("failed to flush startup command: {error}"))
 }
 
 impl TerminalManager {
@@ -63,7 +71,7 @@ impl TerminalManager {
         &mut self,
         worktree_path: String,
         app: Option<AppHandle>,
-        start_with_opencode_session: bool,
+        startup_command: Option<String>,
     ) -> Result<String, String> {
         let path = Path::new(&worktree_path);
         if !path.exists() {
@@ -86,7 +94,7 @@ impl TerminalManager {
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = CommandBuilder::new(&shell);
-        
+
         // Start as a login shell to ensure environment variables are loaded
         if shell.ends_with("/zsh") || shell.ends_with("/bash") || shell.ends_with("/sh") {
             command.arg("-l");
@@ -114,7 +122,7 @@ impl TerminalManager {
             .take_writer()
             .map_err(|error| format!("failed to get pty writer: {error}"))?;
 
-        write_startup_command(&mut writer, start_with_opencode_session)?;
+        write_startup_command(&mut writer, startup_command)?;
 
         let session_id = format!("term-{}", uuid::Uuid::new_v4());
         let reader = Arc::new(Mutex::new(reader));
@@ -280,12 +288,12 @@ pub fn create_terminal_session(
     app: AppHandle,
     manager: State<'_, Mutex<TerminalManager>>,
     worktree_path: String,
-    start_with_open_code_session: bool,
+    startup_command: Option<String>,
 ) -> Result<String, String> {
     let mut manager = manager
         .lock()
         .map_err(|_| "terminal manager lock poisoned".to_string())?;
-    manager.create_session(worktree_path, Some(app), start_with_open_code_session)
+    manager.create_session(worktree_path, Some(app), startup_command)
 }
 
 #[tauri::command]
@@ -341,7 +349,7 @@ mod tests {
     #[test]
     fn create_session_with_valid_path_succeeds() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/tmp".to_string(), None, false);
+        let result = manager.create_session("/tmp".to_string(), None, None);
 
         assert!(result.is_ok());
 
@@ -363,7 +371,7 @@ mod tests {
     #[test]
     fn create_session_with_invalid_path_fails() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/path/does/not/exist".to_string(), None, false);
+        let result = manager.create_session("/path/does/not/exist".to_string(), None, None);
 
         assert!(result.is_err());
     }
@@ -377,20 +385,30 @@ mod tests {
     }
 
     #[test]
-    fn startup_command_is_written_when_open_code_flag_is_enabled() {
+    fn startup_command_is_written_when_command_is_configured() {
         let mut writer = Vec::new();
 
-        let result = write_startup_command(&mut writer, true);
+        let result = write_startup_command(&mut writer, Some("opencode".to_string()));
 
         assert!(result.is_ok());
         assert_eq!(writer, b"opencode\n");
     }
 
     #[test]
-    fn startup_command_is_not_written_when_open_code_flag_is_disabled() {
+    fn startup_command_is_not_written_when_command_is_not_configured() {
         let mut writer = Vec::new();
 
-        let result = write_startup_command(&mut writer, false);
+        let result = write_startup_command(&mut writer, None);
+
+        assert!(result.is_ok());
+        assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn startup_command_is_not_written_when_command_is_blank() {
+        let mut writer = Vec::new();
+
+        let result = write_startup_command(&mut writer, Some("   ".to_string()));
 
         assert!(result.is_ok());
         assert!(writer.is_empty());
