@@ -42,6 +42,22 @@ pub struct TerminalManager {
     sessions: HashMap<String, TerminalSession>,
 }
 
+fn write_startup_command(
+    writer: &mut dyn Write,
+    start_with_open_code_session: bool,
+) -> Result<(), String> {
+    if !start_with_open_code_session {
+        return Ok(());
+    }
+
+    writer
+        .write_all(b"opencode\n")
+        .map_err(|error| format!("failed to start OpenCode session: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("failed to flush OpenCode startup command: {error}"))
+}
+
 impl TerminalManager {
     pub fn create_session(
         &mut self,
@@ -90,14 +106,7 @@ impl TerminalManager {
             .take_writer()
             .map_err(|error| format!("failed to get pty writer: {error}"))?;
 
-        if start_with_opencode_session {
-            writer
-                .write_all(b"opencode\n")
-                .map_err(|error| format!("failed to start OpenCode session: {error}"))?;
-            writer
-                .flush()
-                .map_err(|error| format!("failed to flush OpenCode startup command: {error}"))?;
-        }
+        write_startup_command(&mut writer, start_with_opencode_session)?;
 
         let session_id = format!("term-{}", uuid::Uuid::new_v4());
         let reader = Arc::new(Mutex::new(reader));
@@ -319,7 +328,7 @@ pub fn list_terminal_sessions(
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalManager;
+    use super::{write_startup_command, TerminalManager};
 
     #[test]
     fn create_session_with_valid_path_succeeds() {
@@ -357,5 +366,25 @@ mod tests {
         let result = manager.close_session("term-missing");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn startup_command_is_written_when_open_code_flag_is_enabled() {
+        let mut writer = Vec::new();
+
+        let result = write_startup_command(&mut writer, true);
+
+        assert!(result.is_ok());
+        assert_eq!(writer, b"opencode\n");
+    }
+
+    #[test]
+    fn startup_command_is_not_written_when_open_code_flag_is_disabled() {
+        let mut writer = Vec::new();
+
+        let result = write_startup_command(&mut writer, false);
+
+        assert!(result.is_ok());
+        assert!(writer.is_empty());
     }
 }
