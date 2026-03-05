@@ -16,6 +16,8 @@ type RepoPaneProps = {
   onSelectWorktree: (repoId: string, worktreePath: string) => void;
   onWorktreesChanged?: (repoId: string, worktrees: WorktreeInfo[]) => void;
   onDismissNotification?: () => void;
+  openCodeByRepoId: Record<string, boolean>;
+  onSetOpenCodeStart: (repoId: string, enabled: boolean) => void;
 };
 
 type RepoWatchProps = {
@@ -48,7 +50,9 @@ export default function RepoPane({
   onRemoveRepo,
   onSelectWorktree,
   onWorktreesChanged,
-  onDismissNotification
+  onDismissNotification,
+  openCodeByRepoId,
+  onSetOpenCodeStart
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
@@ -200,6 +204,24 @@ export default function RepoPane({
                           role="menu"
                           aria-label={`${repo.name} workspace options`}
                         >
+                          <label
+                            className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-xs text-subtext1 hover:bg-surface0/60"
+                            data-testid="repo-opencode-toggle"
+                          >
+                            <span className="truncate">OpenCode Start</span>
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5 accent-blue"
+                              checked={openCodeByRepoId[repo.id] ?? false}
+                              onChange={(event) => {
+                                onSetOpenCodeStart(repo.id, event.target.checked);
+                              }}
+                              aria-label={`Enable OpenCode start for ${repo.name}`}
+                            />
+                          </label>
+
+                          <div className="my-1 h-px bg-surface0" />
+
                           <button
                             type="button"
                             className="w-full rounded px-2 py-1.5 text-left text-xs text-red hover:bg-surface0/60"

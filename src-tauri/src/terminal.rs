@@ -47,6 +47,7 @@ impl TerminalManager {
         &mut self,
         worktree_path: String,
         app: Option<AppHandle>,
+        start_with_opencode_session: bool,
     ) -> Result<String, String> {
         let path = Path::new(&worktree_path);
         if !path.exists() {
@@ -84,10 +85,19 @@ impl TerminalManager {
             .master
             .try_clone_reader()
             .map_err(|error| format!("failed to get pty reader: {error}"))?;
-        let writer = pair
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|error| format!("failed to get pty writer: {error}"))?;
+
+        if start_with_opencode_session {
+            writer
+                .write_all(b"opencode\n")
+                .map_err(|error| format!("failed to start OpenCode session: {error}"))?;
+            writer
+                .flush()
+                .map_err(|error| format!("failed to flush OpenCode startup command: {error}"))?;
+        }
 
         let session_id = format!("term-{}", uuid::Uuid::new_v4());
         let reader = Arc::new(Mutex::new(reader));
@@ -253,11 +263,12 @@ pub fn create_terminal_session(
     app: AppHandle,
     manager: State<'_, Mutex<TerminalManager>>,
     worktree_path: String,
+    start_with_opencode_session: bool,
 ) -> Result<String, String> {
     let mut manager = manager
         .lock()
         .map_err(|_| "terminal manager lock poisoned".to_string())?;
-    manager.create_session(worktree_path, Some(app))
+    manager.create_session(worktree_path, Some(app), start_with_opencode_session)
 }
 
 #[tauri::command]
@@ -313,7 +324,7 @@ mod tests {
     #[test]
     fn create_session_with_valid_path_succeeds() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/tmp".to_string(), None);
+        let result = manager.create_session("/tmp".to_string(), None, false);
 
         assert!(result.is_ok());
 
@@ -335,7 +346,7 @@ mod tests {
     #[test]
     fn create_session_with_invalid_path_fails() {
         let mut manager = TerminalManager::default();
-        let result = manager.create_session("/path/does/not/exist".to_string(), None);
+        let result = manager.create_session("/path/does/not/exist".to_string(), None, false);
 
         assert!(result.is_err());
     }

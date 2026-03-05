@@ -33,6 +33,8 @@ describe("RepoPane", () => {
       is_bare: false
     };
 
+    const setOpenCodeStart = vi.fn();
+
     render(
       <RepoPane
         mobileOpen={false}
@@ -51,6 +53,8 @@ describe("RepoPane", () => {
         onSelectWorktree={vi.fn()}
         onWorktreesChanged={vi.fn()}
         onDismissNotification={vi.fn()}
+        openCodeByRepoId={{}}
+        onSetOpenCodeStart={setOpenCodeStart}
       />
     );
 
@@ -64,6 +68,8 @@ describe("RepoPane", () => {
 
     fireEvent.click(screen.getByTestId("repo-config-btn"));
     expect(screen.getByTestId("repo-config-menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("repo-opencode-toggle"));
+    expect(setOpenCodeStart).toHaveBeenCalledWith("repo-1", true);
     expect(screen.getByTestId("remove-repo-btn")).toBeInTheDocument();
   });
 });

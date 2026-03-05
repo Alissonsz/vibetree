@@ -43,6 +43,7 @@ export default function Layout() {
 
   const [repoOpen, setRepoOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
+  const [openCodeByRepoId, setOpenCodeByRepoId] = useState<Record<string, boolean>>({});
 
   const {
     state,
@@ -113,6 +114,9 @@ export default function Layout() {
     return worktrees.find((w) => w.path === state.selectedWorktreePath) || null;
   }, [state.selectedWorktreePath, state.selectedRepoId, state.worktreesByRepoId]);
 
+  const selectedRepoStartsWithOpenCode =
+    state.selectedRepoId !== null ? openCodeByRepoId[state.selectedRepoId] ?? false : false;
+
   return (
     <div className={`relative h-full ${isDragging ? "cursor-col-resize select-none" : ""}`}>
       {/* Backdrop for mobile */}
@@ -141,6 +145,10 @@ export default function Layout() {
           onSelectWorktree={selectWorktree}
           onWorktreesChanged={setWorktrees}
           onDismissNotification={clearNotification}
+          openCodeByRepoId={openCodeByRepoId}
+          onSetOpenCodeStart={(repoId: string, enabled: boolean) => {
+            setOpenCodeByRepoId((current) => ({ ...current, [repoId]: enabled }));
+          }}
         />
 
         <div
@@ -155,6 +163,7 @@ export default function Layout() {
           onToggleChanges={() => setChangesOpen(!changesOpen)}
           selectedWorktreePath={state.selectedWorktreePath}
           selectedWorktree={selectedWorktree}
+          startWithOpenCodeSession={selectedRepoStartsWithOpenCode}
         />
 
         <div
