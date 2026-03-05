@@ -142,20 +142,32 @@ export default function RepoPane({
                   <div className="flex items-center justify-between group px-2 py-1 mb-1">
                     <button
                       type="button"
-                      className="text-xs font-semibold uppercase tracking-wider text-text flex items-center gap-2"
+                      className="text-xs font-semibold uppercase tracking-wider text-text flex items-center gap-2 min-w-0"
                       onClick={() => toggleExpanded(repo.id)}
                     >
-                      {repo.name} <span className="text-subtext1 text-[10px] normal-case">({worktrees.length})</span>
+                      <span className="truncate">{repo.name}</span>
+                      <span className="text-subtext1 text-[10px] normal-case">({worktrees.length})</span>
                     </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 text-subtext1 hover:text-red text-xs transition-opacity"
-                      data-testid="remove-repo-btn"
-                      onClick={() => void handleRemoveRepo(repo.id)}
-                      aria-label={`Remove ${repo.name}`}
-                    >
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2 ml-2">
+                      <button
+                        type="button"
+                        className="text-subtext1 hover:text-text text-xs transition-colors"
+                        data-testid="repo-config-btn"
+                        aria-label={`Configure ${repo.name}`}
+                        title="Workspace configuration"
+                      >
+                        ⚙
+                      </button>
+                      <button
+                        type="button"
+                        className="opacity-0 group-hover:opacity-100 text-subtext1 hover:text-red text-xs transition-opacity"
+                        data-testid="remove-repo-btn"
+                        onClick={() => void handleRemoveRepo(repo.id)}
+                        aria-label={`Remove ${repo.name}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
 
                   {expanded && (

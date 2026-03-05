@@ -57,6 +57,7 @@ describe("RepoPane", () => {
     expect(screen.getByTestId("repo-pane")).toBeInTheDocument();
     expect(screen.getByTestId("add-repo-btn")).toBeInTheDocument();
     expect(screen.getByTestId("repo-item-repo-1")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-config-btn")).toBeInTheDocument();
     expect(screen.getByTestId("worktree-item")).toHaveTextContent("main");
   });
 });
