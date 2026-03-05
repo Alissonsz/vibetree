@@ -20,8 +20,10 @@
 html,
 body {
   height: 100%;
+  width: 100%;
   background-color: var(--color-base);
   color: var(--color-text);
+  overflow: hidden;
 }
 
 body {
@@ -31,6 +33,8 @@ body {
 
 #root {
   height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 .wbNoSelect {

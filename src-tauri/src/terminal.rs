@@ -263,12 +263,12 @@ pub fn create_terminal_session(
     app: AppHandle,
     manager: State<'_, Mutex<TerminalManager>>,
     worktree_path: String,
-    start_with_opencode_session: bool,
+    start_with_open_code_session: bool,
 ) -> Result<String, String> {
     let mut manager = manager
         .lock()
         .map_err(|_| "terminal manager lock poisoned".to_string())?;
-    manager.create_session(worktree_path, Some(app), start_with_opencode_session)
+    manager.create_session(worktree_path, Some(app), start_with_open_code_session)
 }
 
 #[tauri::command]

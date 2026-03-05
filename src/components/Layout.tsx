@@ -118,7 +118,7 @@ export default function Layout() {
     state.selectedRepoId !== null ? openCodeByRepoId[state.selectedRepoId] ?? false : false;
 
   return (
-    <div className={`relative h-full ${isDragging ? "cursor-col-resize select-none" : ""}`}>
+    <div className={`relative h-full w-full overflow-hidden ${isDragging ? "cursor-col-resize select-none" : ""}`}>
       {/* Backdrop for mobile */}
       <div
         className={`fixed inset-0 bg-crust/60 z-40 md:hidden transition-opacity ${
@@ -129,8 +129,8 @@ export default function Layout() {
       />
       <div
         ref={layoutRef}
-        className="h-full grid bg-base"
-        style={{ gridTemplateColumns: gridTemplate }}
+        className="h-full w-full grid bg-base"
+        style={{ gridTemplateColumns: gridTemplate, gridTemplateRows: "minmax(0, 1fr)" }}
       >
         <RepoPane
           mobileOpen={repoOpen}

@@ -56,7 +56,7 @@ export default function ChangesPane({
   return (
     <aside
       id="wb-changes-pane"
-      className={`flex flex-col bg-base border-l border-surface0 h-full ${
+      className={`flex h-full min-h-0 flex-col overflow-hidden bg-base border-l border-surface0 ${
         mobileOpen
           ? "fixed inset-y-0 right-0 w-4/5 z-50 shadow-2xl"
           : "hidden md:flex"
@@ -175,4 +175,3 @@ export default function ChangesPane({
     </aside>
   );
 }
-

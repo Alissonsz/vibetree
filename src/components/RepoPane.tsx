@@ -114,7 +114,7 @@ export default function RepoPane({
   return (
     <aside
       id="wb-repo-pane"
-      className={`flex flex-col bg-base border-r border-surface0 h-full ${
+      className={`flex h-full min-h-0 flex-col overflow-hidden bg-base border-r border-surface0 ${
         mobileOpen ? "fixed inset-y-0 left-0 w-4/5 z-50 shadow-2xl" : "hidden md:flex"
       }`}
       data-testid="repo-pane"

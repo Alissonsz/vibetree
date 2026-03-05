@@ -155,7 +155,7 @@ export default function TerminalPane({
 
   return (
     <section
-      className="flex flex-col bg-base h-full"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-base"
       data-testid="terminal-pane"
       role="main"
       aria-label="Terminal"
