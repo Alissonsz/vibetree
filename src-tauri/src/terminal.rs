@@ -68,7 +68,15 @@ impl TerminalManager {
             .map_err(|error| format!("failed to allocate pty: {error}"))?;
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut command = CommandBuilder::new(shell);
+        let mut command = CommandBuilder::new(&shell);
+        
+        // Start as a login shell to ensure environment variables are loaded
+        if shell.ends_with("/zsh") || shell.ends_with("/bash") || shell.ends_with("/sh") {
+            command.arg("-l");
+        } else if shell.ends_with("/fish") {
+            command.arg("-l");
+        }
+
         command.cwd(worktree_path.clone());
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");

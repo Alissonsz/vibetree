@@ -9,14 +9,25 @@ type ChangesPaneProps = {
   selectedWorktreePath: string | null;
 };
 
+type TreeNode = {
+  name: string;
+  fullPath: string;
+  isDirectory: boolean;
+  children: TreeNode[];
+  file?: ChangedFile;
+};
+
 const STATUS_LABELS: Record<FileStatus, string> = {
   Added: "A",
+  Copied: "C",
   Deleted: "D",
+  Ignored: "!",
   Modified: "M",
   Renamed: "R",
   Typechange: "T",
   Untracked: "?",
   Unmodified: " ",
+  UpdatedButUnmerged: "U",
 };
 
 export default function ChangesPane({
@@ -27,8 +38,201 @@ export default function ChangesPane({
   const [changedFiles, setChangedFiles] = useState<ChangedFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [collapsedDirectories, setCollapsedDirectories] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const changesClient = useMemo(() => createChangesClient(), []);
+
+  const tree = useMemo(() => {
+    type TreeNodeInternal = {
+      name: string;
+      fullPath: string;
+      isDirectory: boolean;
+      children: TreeNodeInternal[];
+      childrenByName: Map<string, TreeNodeInternal>;
+      file?: ChangedFile;
+    };
+
+    const getSegments = (path: string) => path.split("/").filter(Boolean);
+
+    const root: TreeNodeInternal = {
+      name: "",
+      fullPath: "",
+      isDirectory: true,
+      children: [],
+      childrenByName: new Map(),
+    };
+
+    const ensureDirectory = (
+      parent: TreeNodeInternal,
+      name: string,
+      fullPath: string
+    ) => {
+      const existing = parent.childrenByName.get(name);
+      if (existing && existing.isDirectory) return existing;
+
+      const node: TreeNodeInternal = {
+        name,
+        fullPath,
+        isDirectory: true,
+        children: [],
+        childrenByName: new Map(),
+      };
+      parent.childrenByName.set(name, node);
+      parent.children.push(node);
+      return node;
+    };
+
+    for (const file of changedFiles) {
+      const segments = getSegments(file.path);
+      if (segments.length === 0) continue;
+
+      let current = root;
+      let currentPath = "";
+      for (let i = 0; i < segments.length; i += 1) {
+        const segment = segments[i];
+        const isLeaf = i === segments.length - 1;
+
+        if (isLeaf) {
+          const leafNode: TreeNodeInternal = {
+            name: segment,
+            fullPath: file.path,
+            isDirectory: false,
+            children: [],
+            childrenByName: new Map(),
+            file,
+          };
+          current.children.push(leafNode);
+          continue;
+        }
+
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+        current = ensureDirectory(current, segment, currentPath);
+      }
+    }
+
+    const sortTree = (node: TreeNodeInternal) => {
+      node.children.sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const child of node.children) {
+        if (child.isDirectory) sortTree(child);
+      }
+    };
+
+    sortTree(root);
+
+    const stripInternal = (node: TreeNodeInternal): TreeNode => {
+      return {
+        name: node.name,
+        fullPath: node.fullPath,
+        isDirectory: node.isDirectory,
+        children: node.children.map(stripInternal),
+        file: node.file,
+      };
+    };
+
+    return root.children.map(stripInternal);
+  }, [changedFiles]);
+
+  const getBasename = (path: string) => {
+    const segments = path.split("/").filter(Boolean);
+    return segments[segments.length - 1] ?? path;
+  };
+
+  const toggleDirectory = (dirPath: string) => {
+    setCollapsedDirectories((prev) => {
+      const next = new Set(prev);
+      if (next.has(dirPath)) next.delete(dirPath);
+      else next.add(dirPath);
+      return next;
+    });
+  };
+
+  const renderTreeNodes = (nodes: TreeNode[], depth: number): JSX.Element[] => {
+    return nodes.flatMap((node) => {
+      if (node.isDirectory) {
+        const isExpanded = !collapsedDirectories.has(node.fullPath);
+        const row = (
+          <li key={`dir:${node.fullPath}`}>
+            <button
+              type="button"
+              data-testid="tree-directory"
+              className="w-full flex items-center gap-2 py-1.5 pr-2 hover:bg-surface0/30 rounded-md transition-colors text-left"
+              style={{ paddingLeft: depth * 16 }}
+              onClick={() => toggleDirectory(node.fullPath)}
+            >
+              <span className="text-subtext1 w-3 text-center select-none">
+                {isExpanded ? "▾" : "▸"}
+              </span>
+              <span className="text-subtext1 font-medium text-xs truncate">
+                {node.name}
+              </span>
+            </button>
+          </li>
+        );
+
+        return isExpanded
+          ? [row, ...renderTreeNodes(node.children, depth + 1)]
+          : [row];
+      }
+
+      const file = node.file;
+      if (!file) return [];
+
+      const isAdded = file.status === "Added" || file.status === "Untracked";
+      const isDeleted = file.status === "Deleted";
+      const statusColor = isAdded
+        ? "text-green"
+        : isDeleted
+          ? "text-red"
+          : "text-text";
+
+      const additions = file.additions;
+      const deletions = file.deletions;
+      const showAdditions = additions != null && additions !== 0;
+      const showDeletions = deletions != null && deletions !== 0;
+      const showStats = showAdditions || showDeletions;
+
+      const displayName =
+        file.status === "Renamed" && file.original_path
+          ? `${getBasename(file.original_path)} -> ${getBasename(file.path)}`
+          : node.name;
+
+      return [
+        <li
+          key={`${file.path}:${file.status}:${file.original_path ?? ""}`}
+          className="flex items-center justify-between pr-2 py-1.5 hover:bg-surface0/30 rounded-md transition-colors group cursor-pointer"
+          style={{ paddingLeft: depth * 16 }}
+          data-testid="changed-file-item"
+        >
+          <div className="flex items-center gap-2 overflow-hidden min-w-0">
+            <span
+              className={`text-[10px] font-mono font-bold w-3 text-center ${statusColor}`}
+              aria-label={file.status}
+            >
+              {STATUS_LABELS[file.status]}
+            </span>
+            <span className="text-sm text-subtext1 group-hover:text-text truncate transition-colors">
+              {displayName}
+            </span>
+          </div>
+          {showStats ? (
+            <div className="flex items-center gap-2 shrink-0 pl-3 font-mono text-[11px]">
+              {showAdditions ? (
+                <span className="text-green">+{additions}</span>
+              ) : null}
+              {showDeletions ? (
+                <span className="text-red">-{deletions}</span>
+              ) : null}
+            </div>
+          ) : null}
+        </li>,
+      ];
+    });
+  };
 
   const loadChanges = useCallback(async () => {
     if (!selectedWorktreePath) {
@@ -139,40 +343,10 @@ export default function ChangesPane({
         !error &&
         changedFiles.length > 0 ? (
           <ul className="space-y-1" data-testid="changed-file-list">
-            {changedFiles.map((file) => {
-              const isAdded =
-                file.status === "Added" || file.status === "Untracked";
-              const isDeleted = file.status === "Deleted";
-              const statusColor = isAdded
-                ? "text-green"
-                : isDeleted
-                  ? "text-red"
-                  : "text-text";
-
-              return (
-                <li
-                  key={`${file.path}:${file.status}:${file.original_path ?? ""}`}
-                  className="flex items-center justify-between px-2 py-1.5 hover:bg-surface0/30 rounded-md transition-colors group cursor-pointer"
-                  data-testid="changed-file-item"
-                >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <span
-                      className={`text-[10px] font-mono font-bold w-3 text-center ${statusColor}`}
-                      aria-label={file.status}
-                    >
-                      {STATUS_LABELS[file.status]}
-                    </span>
-                    <span className="text-sm text-subtext1 group-hover:text-text truncate transition-colors">
-                      {file.path}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
+            {renderTreeNodes(tree, 0)}
           </ul>
         ) : null}
       </div>
     </aside>
   );
 }
-

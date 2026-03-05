@@ -18,16 +18,20 @@ export type SelectionState = {
 
 export type FileStatus =
   | "Modified"
+  | "Unmodified"
   | "Added"
   | "Deleted"
   | "Renamed"
   | "Copied"
   | "Untracked"
   | "Ignored"
+  | "Typechange"
   | "UpdatedButUnmerged";
 
 export type ChangedFile = {
   path: string;
   status: FileStatus;
   original_path: string | null;
+  additions: number | null;
+  deletions: number | null;
 };
