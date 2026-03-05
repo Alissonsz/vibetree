@@ -165,19 +165,21 @@ export default function RepoPane({
 
               return (
                 <div key={repo.id} data-testid={`repo-item-${repo.id}`}>
-                  <div className="flex items-center justify-between group px-2 py-1 mb-1 relative">
+                  <div className="flex items-center justify-between group px-2 py-1 mb-1 relative min-h-7">
                     <button
                       type="button"
-                      className="text-xs font-semibold uppercase tracking-wider text-text flex items-center gap-2 min-w-0"
+                      className="text-xs font-semibold uppercase tracking-wider text-text inline-flex items-center gap-2 min-w-0 h-6 leading-none"
                       onClick={() => toggleExpanded(repo.id)}
                     >
                       <span className="truncate">{repo.name}</span>
-                      <span className="text-subtext1 text-[10px] normal-case">({worktrees.length})</span>
+                      <span className="inline-flex h-6 items-center text-subtext1 text-[10px] normal-case leading-none">
+                        ({worktrees.length})
+                      </span>
                     </button>
-                    <div className="relative ml-2" data-repo-config-root="true">
+                    <div className="relative ml-2 flex h-6 items-center" data-repo-config-root="true">
                       <button
                         type="button"
-                        className="text-subtext1 hover:text-text text-xs transition-colors"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded text-sm leading-none text-subtext1 transition-colors hover:bg-surface0/50 hover:text-text"
                         data-testid="repo-config-btn"
                         aria-label={`Configure ${repo.name}`}
                         aria-expanded={configRepoId === repo.id}
