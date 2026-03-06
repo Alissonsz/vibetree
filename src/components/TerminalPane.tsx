@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { X, Plus, SquareTerminal } from "lucide-react";
 
 import { createTerminalClient } from "../hooks/useTerminal";
 import TerminalInstance from "./TerminalInstance";
 import type { WorktreeInfo } from "../types";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
 
 type TerminalPaneProps = {
   repoOpen: boolean;
@@ -165,24 +168,20 @@ export default function TerminalPane({
       <div className="flex-1 flex flex-col min-h-0 relative">
         {/* Mobile Toggles */}
         <div className="md:hidden flex gap-2 p-2 absolute top-0 right-0 z-50">
-          <button
-            type="button"
-            className={`px-3 py-1 text-xs rounded-md border ${
-              repoOpen ? "bg-blue border-blue text-base" : "bg-transparent border-surface0 text-subtext1"
-            }`}
+          <Button
+            size="sm"
+            className={repoOpen ? "bg-blue border-blue text-base" : "bg-transparent border-surface0 text-subtext1"}
             onClick={onToggleRepo}
           >
             Repos
-          </button>
-          <button
-            type="button"
-            className={`px-3 py-1 text-xs rounded-md border ${
-              changesOpen ? "bg-blue border-blue text-base" : "bg-transparent border-surface0 text-subtext1"
-            }`}
+          </Button>
+          <Button
+            size="sm"
+            className={changesOpen ? "bg-blue border-blue text-base" : "bg-transparent border-surface0 text-subtext1"}
             onClick={onToggleChanges}
           >
             Changes
-          </button>
+          </Button>
         </div>
 
         {selectedWorktreePath && worktreeSessions.length > 0 ? (
@@ -204,45 +203,50 @@ export default function TerminalPane({
                   aria-selected={isActive}
                   onClick={() => setActiveSessionIdByWorktree((prev) => ({ ...prev, [selectedWorktreePath]: session.sessionId }))}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#fab387]' : 'bg-surface2'}`}></span>
+                  <span className={`w-1.5 h-1.5 rounded-none ${isActive ? 'bg-[#fab387]' : 'bg-surface2'}`}></span>
                   <span className="truncate max-w-[160px]" title={displayTitle}>
                     {displayTitle}
                   </span>
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded hover:bg-surface1 text-subtext1 hover:text-text transition-all"
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="opacity-0 group-hover:opacity-100 w-4 h-4 p-0"
                     data-testid="close-terminal-btn"
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleCloseSession(selectedWorktreePath, session.sessionId);
                     }}
                   >
-                    ✕
-                  </button>
+                    <X size={10} />
+                  </Button>
                 </div>
               );
             })}
-            <button
-              type="button"
-              className="text-subtext1 hover:text-text px-3 py-2 flex items-center justify-center transition-colors border-r border-surface0"
+            <Button
+              variant="ghost"
+              className="px-3 py-2 border-r border-surface0 h-full rounded-none group"
               onClick={() => void createSession(selectedWorktreePath, selectedWorktree?.branch || undefined)}
               title="New Terminal"
               disabled={!startupConfigReady}
             >
-              <div className="bg-surface0/50 hover:bg-surface1 p-1 rounded-md text-[10px] w-5 h-5 flex items-center justify-center text-subtext1 hover:text-text">+</div>
-            </button>
+              <div className="bg-surface0/50 group-hover:bg-surface1 p-1 rounded-sm w-5 h-5 flex items-center justify-center transition-colors">
+                <Plus size={12} />
+              </div>
+            </Button>
           </div>
         ) : null}
 
         {!selectedWorktreePath ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-base">
+            <SquareTerminal size={48} className="text-surface1 mb-4" />
             <h3 className="text-text font-medium mb-1">No workspace selected</h3>
             <p className="text-subtext1 text-sm">Select a workspace from the sidebar to open a terminal.</p>
           </div>
         ) : null}
 
         {selectedWorktreePath && worktreeSessions.length === 0 && !error ? (
-          <div className="flex-1 flex items-center justify-center text-subtext1 text-sm bg-base">
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-subtext1 text-sm bg-base">
+            <div className="w-12 h-12 border-2 border-surface1 border-t-blue animate-spin rounded-full" />
             Starting terminal session...
           </div>
         ) : null}
@@ -259,9 +263,11 @@ export default function TerminalPane({
         </div>
 
         {error && (
-          <div className="absolute bottom-4 left-4 right-4 bg-red/10 text-red p-3 rounded-md text-sm border border-red/20 shadow-lg z-50">
-            <p className="font-semibold mb-1">Terminal error</p>
-            <p>{error}</p>
+          <div className="absolute bottom-4 left-4 right-4 z-50">
+            <Card variant="error" className="shadow-lg">
+              <p className="font-semibold mb-1">Terminal error</p>
+              <p>{error}</p>
+            </Card>
           </div>
         )}
       </div>

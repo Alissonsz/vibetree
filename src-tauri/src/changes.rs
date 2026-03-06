@@ -1,8 +1,20 @@
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, State};
+
+const CHANGES_EVENT_NAME: &str = "changes-detected";
+const DEBOUNCE_WINDOW: Duration = Duration::from_millis(300);
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_FILE_SIZE_FOR_STATS: u64 = 1024 * 1024; // 1MB limit for line counting
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum FileStatus {
@@ -28,6 +40,7 @@ pub struct ChangedFile {
 trait ChangesEnvironment {
     fn path_exists(&self, path: &str) -> bool;
     fn is_directory(&self, path: &str) -> bool;
+    fn get_file_size(&self, worktree_path: &str, file_path: &str) -> u64;
     fn git_status_porcelain(&self, path: &str) -> Result<Vec<u8>, String>;
     fn git_diff_numstat(&self, path: &str) -> Result<Vec<u8>, String>;
     fn read_file_content(&self, worktree_path: &str, file_path: &str) -> Result<Vec<u8>, String>;
@@ -44,12 +57,18 @@ impl ChangesEnvironment for SystemChangesEnvironment {
         Path::new(path).is_dir()
     }
 
+    fn get_file_size(&self, worktree_path: &str, file_path: &str) -> u64 {
+        let full_path = Path::new(worktree_path).join(file_path);
+        std::fs::metadata(full_path).map(|m| m.len()).unwrap_or(0)
+    }
+
     fn git_status_porcelain(&self, path: &str) -> Result<Vec<u8>, String> {
         let output = Command::new("git")
             .arg("-C")
             .arg(path)
             .arg("status")
             .arg("--porcelain=v1")
+            .arg("-uall") // Show all individual files in untracked directories
             .arg("-z")
             .output()
             .map_err(|error| format!("failed to run git status: {error}"))?;
@@ -98,6 +117,104 @@ impl ChangesEnvironment for SystemChangesEnvironment {
         std::fs::read(&full_path)
             .map_err(|error| format!("failed to read file {}: {}", full_path.display(), error))
     }
+}
+
+struct ChangesWatcher {
+    stop_tx: Sender<()>,
+    thread_handle: Option<JoinHandle<()>>,
+    _watcher: Option<RecommendedWatcher>,
+}
+
+impl ChangesWatcher {
+    fn start(worktree_path: String, app: AppHandle) -> Result<Self, String> {
+        let (event_tx, event_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let mut watcher = RecommendedWatcher::new(
+            move |result: notify::Result<notify::Event>| {
+                if result.is_ok() {
+                    let _ = event_tx.send(());
+                }
+            },
+            Config::default(),
+        )
+        .map_err(|error| format!("failed to initialize changes watcher: {error}"))?;
+
+        watcher
+            .watch(Path::new(&worktree_path), RecursiveMode::Recursive)
+            .map_err(|error| {
+                format!(
+                    "failed to watch worktree path '{}': {error}",
+                    worktree_path
+                )
+            })?;
+
+        let worktree_path_for_thread = worktree_path.clone();
+        let thread_handle = thread::spawn(move || {
+            loop {
+                if stop_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                match event_rx.recv_timeout(POLL_INTERVAL) {
+                    Ok(_) => {
+                        drain_debounced_events(&event_rx, DEBOUNCE_WINDOW);
+                        let _ = app.emit(CHANGES_EVENT_NAME, worktree_path_for_thread.clone());
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            stop_tx,
+            thread_handle: Some(thread_handle),
+            _watcher: Some(watcher),
+        })
+    }
+
+    fn stop(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ChangesService {
+    watchers: HashMap<String, ChangesWatcher>,
+}
+
+impl ChangesService {
+    pub fn start_watching(
+        &mut self,
+        worktree_path: String,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        if let Some(existing) = self.watchers.remove(&worktree_path) {
+            existing.stop();
+        }
+
+        let watcher = ChangesWatcher::start(worktree_path.clone(), app)?;
+        self.watchers.insert(worktree_path, watcher);
+        Ok(())
+    }
+
+    pub fn stop_watching(&mut self, worktree_path: &str) {
+        if let Some(watcher) = self.watchers.remove(worktree_path) {
+            watcher.stop();
+        }
+    }
+}
+
+fn drain_debounced_events(event_rx: &Receiver<()>, debounce_window: Duration) -> usize {
+    let mut drained = 0;
+    while event_rx.recv_timeout(debounce_window).is_ok() {
+        drained += 1;
+    }
+    drained
 }
 
 pub fn parse_porcelain_status(raw: &[u8]) -> Result<Vec<ChangedFile>, String> {
@@ -260,7 +377,7 @@ pub fn get_changed_files_for_path(worktree_path: &str) -> Result<Vec<ChangedFile
     get_changed_files_for_path_with_environment(worktree_path, &environment)
 }
 
-fn get_changed_files_for_path_with_environment<E: ChangesEnvironment>(
+fn get_changed_files_for_path_with_environment<E: ChangesEnvironment + Sync>(
     worktree_path: &str,
     environment: &E,
 ) -> Result<Vec<ChangedFile>, String> {
@@ -284,9 +401,15 @@ fn get_changed_files_for_path_with_environment<E: ChangesEnvironment>(
     files = merge_numstat_into_files(files, &numstat);
 
     // For Added/Untracked files without stats from numstat, compute line count from file content
-    for file in &mut files {
+    // Use parallel processing to speed up file reading and line counting
+    files.par_iter_mut().for_each(|file| {
         if file.additions.is_none() && file.deletions.is_none() {
             if matches!(file.status, FileStatus::Added | FileStatus::Untracked) {
+                // Skip line counting for exceptionally large files
+                if environment.get_file_size(worktree_path, &file.path) > MAX_FILE_SIZE_FOR_STATS {
+                    return;
+                }
+
                 // Try to read file content and count lines
                 match environment.read_file_content(worktree_path, &file.path) {
                     Ok(content) => {
@@ -294,22 +417,106 @@ fn get_changed_files_for_path_with_environment<E: ChangesEnvironment>(
                             file.additions = Some(line_count);
                             file.deletions = Some(0);
                         }
-                        // If line_count is None (binary), leave as None
                     }
-                    Err(_) => {
-                        // File cannot be read (e.g., binary, permission denied) - leave as None
-                    }
+                    Err(_) => {}
                 }
             }
         }
-    }
+    });
 
     Ok(files)
 }
 
 #[tauri::command]
+pub fn get_file_content(worktree_path: String, file_path: String) -> Result<String, String> {
+    let environment = SystemChangesEnvironment;
+    let bytes = environment.read_file_content(&worktree_path, &file_path)?;
+    String::from_utf8(bytes).map_err(|error| format!("file is not valid utf-8: {error}"))
+}
+
+#[tauri::command]
+pub fn get_file_diff(worktree_path: String, file_path: String) -> Result<String, String> {
+    // For untracked files, we want to show the whole file as an addition.
+    // We check status first to decide the command.
+    let status_output = Command::new("git")
+        .arg("-C")
+        .arg(&worktree_path)
+        .arg("status")
+        .arg("--porcelain")
+        .arg("--")
+        .arg(&file_path)
+        .output()
+        .map_err(|error| format!("failed to check file status: {error}"))?;
+
+    let status_str = String::from_utf8_lossy(&status_output.stdout);
+    let is_untracked = status_str.starts_with("??");
+
+    let output = if is_untracked {
+        // For untracked files, diff against /dev/null
+        Command::new("git")
+            .arg("-C")
+            .arg(&worktree_path)
+            .arg("diff")
+            .arg("--no-index")
+            .arg("--patch")
+            .arg("/dev/null")
+            .arg(&file_path)
+            .output()
+            .map_err(|error| format!("failed to run git diff: {error}"))?
+    } else {
+        Command::new("git")
+            .arg("-C")
+            .arg(&worktree_path)
+            .arg("diff")
+            .arg("HEAD")
+            .arg("--patch")
+            .arg("--")
+            .arg(&file_path)
+            .output()
+            .map_err(|error| format!("failed to run git diff: {error}"))?
+    };
+
+    // Note: git diff --no-index returns exit code 1 if there are differences, 
+    // which is expected. We only error if it's not success AND stderr is not empty.
+    if !output.status.success() && !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("git diff command failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[tauri::command]
 pub fn get_changed_files(worktree_path: String) -> Result<Vec<ChangedFile>, String> {
     get_changed_files_for_path(&worktree_path)
+}
+
+fn lock_service<'a>(
+    state: &'a State<'_, Mutex<ChangesService>>,
+) -> Result<std::sync::MutexGuard<'a, ChangesService>, String> {
+    state
+        .lock()
+        .map_err(|error| format!("failed to lock changes state: {error}"))
+}
+
+#[tauri::command]
+pub fn start_watching_changes(
+    worktree_path: String,
+    app: AppHandle,
+    state: State<'_, Mutex<ChangesService>>,
+) -> Result<(), String> {
+    let mut service = lock_service(&state)?;
+    service.start_watching(worktree_path, app)
+}
+
+#[tauri::command]
+pub fn stop_watching_changes(
+    worktree_path: String,
+    state: State<'_, Mutex<ChangesService>>,
+) -> Result<(), String> {
+    let mut service = lock_service(&state)?;
+    service.stop_watching(&worktree_path);
+    Ok(())
 }
 
 fn pick_status(x: char, y: char) -> Option<FileStatus> {
@@ -400,6 +607,10 @@ mod tests {
 
         fn is_directory(&self, path: &str) -> bool {
             *self.directories.get(path).unwrap_or(&false)
+        }
+
+        fn get_file_size(&self, _worktree_path: &str, _file_path: &str) -> u64 {
+            0
         }
 
         fn git_status_porcelain(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -765,7 +976,7 @@ mod tests {
             .iter()
             .find(|f| f.path == "src/also-renamed.rs")
             .unwrap();
-        assert_eq!(also_renamed.additions, None);
+        assert_eq!( also_renamed.additions, None);
         assert_eq!(also_renamed.deletions, None);
         assert_eq!(
             also_renamed.original_path,

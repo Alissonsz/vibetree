@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { 
+  RefreshCw, 
+  X, 
+  ArrowUp, 
+  ChevronDown, 
+  ChevronRight, 
+  Folder, 
+  FileText
+} from "lucide-react";
 
-import { createChangesClient } from "../hooks/useChanges";
+import { createChangesClient, useChangesWatcher } from "../hooks/useChanges";
 import type { ChangedFile, FileStatus } from "../types";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
+import { Modal } from "./ui/Modal";
+import { Badge } from "./ui/Badge";
 
 type ChangesPaneProps = {
   mobileOpen: boolean;
@@ -25,7 +38,7 @@ const STATUS_LABELS: Record<FileStatus, string> = {
   Modified: "M",
   Renamed: "R",
   Typechange: "T",
-  Untracked: "?",
+  Untracked: "A",
   Unmodified: " ",
   UpdatedButUnmerged: "U",
 };
@@ -42,7 +55,68 @@ export default function ChangesPane({
     () => new Set()
   );
 
+  const [viewingFile, setViewingFile] = useState<{
+    name: string;
+    path: string;
+  } | null>(null);
+  const [fileContent, setFileContent] = useState<string>("");
+  const [fileDiff, setFileDiff] = useState<string>("");
+  const [viewMode, setViewMode] = useState<"content" | "diff">("diff");
+  const [isFileLoading, setIsFileLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
   const changesClient = useMemo(() => createChangesClient(), []);
+
+  const renderDiffLine = (line: string, index: number) => {
+    let bgColor = "";
+    let textColor = "text-text";
+
+    if (line.startsWith("+")) {
+      bgColor = "bg-green/15";
+      textColor = "text-green";
+    } else if (line.startsWith("-")) {
+      bgColor = "bg-red/15";
+      textColor = "text-red";
+    } else if (line.startsWith("@@")) {
+      bgColor = "bg-blue/10";
+      textColor = "text-blue";
+    } else if (line.startsWith("diff") || line.startsWith("index") || line.startsWith("---") || line.startsWith("+++")) {
+      textColor = "text-subtext0";
+    }
+
+    return (
+      <div key={index} className={`whitespace-pre-wrap font-mono text-sm px-4 py-0.5 ${bgColor} ${textColor}`}>
+        {line || " "}
+      </div>
+    );
+  };
+
+  const handleFileClick = useCallback(
+    async (file: ChangedFile) => {
+      if (!selectedWorktreePath || file.path.endsWith("/")) return;
+
+      setViewingFile({ name: getBasename(file.path), path: file.path });
+      setViewMode("diff");
+      setIsFileLoading(true);
+      setFileError(null);
+      setFileContent("");
+      setFileDiff("");
+
+      try {
+        const [content, diff] = await Promise.all([
+          changesClient.getFileContent(selectedWorktreePath, file.path),
+          changesClient.getFileDiff(selectedWorktreePath, file.path),
+        ]);
+        setFileContent(content);
+        setFileDiff(diff);
+      } catch (err) {
+        setFileError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setIsFileLoading(false);
+      }
+    },
+    [selectedWorktreePath, changesClient]
+  );
 
   const tree = useMemo(() => {
     type TreeNodeInternal = {
@@ -85,6 +159,7 @@ export default function ChangesPane({
     };
 
     for (const file of changedFiles) {
+      const isActuallyDirectory = file.path.endsWith("/");
       const segments = getSegments(file.path);
       if (segments.length === 0) continue;
 
@@ -92,9 +167,11 @@ export default function ChangesPane({
       let currentPath = "";
       for (let i = 0; i < segments.length; i += 1) {
         const segment = segments[i];
-        const isLeaf = i === segments.length - 1;
+        const isLastSegment = i === segments.length - 1;
 
-        if (isLeaf) {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+
+        if (isLastSegment && !isActuallyDirectory) {
           const leafNode: TreeNodeInternal = {
             name: segment,
             fullPath: file.path,
@@ -107,7 +184,6 @@ export default function ChangesPane({
           continue;
         }
 
-        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
         current = ensureDirectory(current, segment, currentPath);
       }
     }
@@ -160,13 +236,14 @@ export default function ChangesPane({
             <button
               type="button"
               data-testid="tree-directory"
-              className="w-full flex items-center gap-2 py-1.5 pr-2 hover:bg-surface0/30 rounded-md transition-colors text-left"
+              className="w-full flex items-center gap-2 py-1.5 pr-2 hover:bg-surface0/30 rounded-sm transition-colors text-left cursor-pointer group"
               style={{ paddingLeft: depth * 16 }}
               onClick={() => toggleDirectory(node.fullPath)}
             >
-              <span className="text-subtext1 w-3 text-center select-none">
-                {isExpanded ? "▾" : "▸"}
+              <span className="text-subtext1 w-4 flex items-center justify-center select-none">
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </span>
+              <Folder size={14} className="text-blue/70 shrink-0" />
               <span className="text-subtext1 font-medium text-xs truncate">
                 {node.name}
               </span>
@@ -184,15 +261,17 @@ export default function ChangesPane({
 
       const isAdded = file.status === "Added" || file.status === "Untracked";
       const isDeleted = file.status === "Deleted";
-      const statusColor = isAdded
-        ? "text-green"
+      const badgeVariant = isAdded
+        ? "green"
         : isDeleted
-          ? "text-red"
-          : "text-text";
+          ? "red"
+          : "default";
 
       const additions = file.additions;
       const deletions = file.deletions;
-      const showAdditions = additions != null && additions !== 0;
+      const isNew = file.status === "Added" || file.status === "Untracked";
+      
+      const showAdditions = additions != null && (additions !== 0 || isNew);
       const showDeletions = deletions != null && deletions !== 0;
       const showStats = showAdditions || showDeletions;
 
@@ -204,17 +283,19 @@ export default function ChangesPane({
       return [
         <li
           key={`${file.path}:${file.status}:${file.original_path ?? ""}`}
-          className="flex items-center justify-between pr-2 py-1.5 hover:bg-surface0/30 rounded-md transition-colors group cursor-pointer"
-          style={{ paddingLeft: depth * 16 }}
+          className="flex items-center justify-between pr-2 py-1.5 hover:bg-surface0/30 rounded-sm transition-colors group cursor-pointer"
+          style={{ paddingLeft: depth * 16 + 20 }}
           data-testid="changed-file-item"
+          onClick={() => handleFileClick(file)}
         >
           <div className="flex items-center gap-2 overflow-hidden min-w-0">
-            <span
-              className={`text-[10px] font-mono font-bold w-3 text-center ${statusColor}`}
+            <Badge
+              variant={badgeVariant}
               aria-label={file.status}
             >
               {STATUS_LABELS[file.status]}
-            </span>
+            </Badge>
+            <FileText size={14} className="text-subtext1/50 shrink-0" />
             <span className="text-sm text-subtext1 group-hover:text-text truncate transition-colors">
               {displayName}
             </span>
@@ -234,13 +315,15 @@ export default function ChangesPane({
     });
   };
 
-  const loadChanges = useCallback(async () => {
+  const loadChanges = useCallback(async (silent = false) => {
     if (!selectedWorktreePath) {
       setChangedFiles([]);
       return;
     }
 
-    setIsLoading(true);
+    if (!silent) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
@@ -249,9 +332,13 @@ export default function ChangesPane({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [selectedWorktreePath, changesClient]);
+
+  useChangesWatcher(selectedWorktreePath, loadChanges);
 
   useEffect(() => {
     void loadChanges();
@@ -272,38 +359,38 @@ export default function ChangesPane({
       <div className="flex items-center justify-between p-4 mb-2">
         <div className="text-sm font-medium text-text">Review Changes</div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="text-subtext1 hover:text-text text-xs flex items-center gap-1 transition-colors"
+          <Button
+            variant="ghost"
+            size="icon"
             data-testid="refresh-changes-btn"
             onClick={() => void loadChanges()}
             disabled={!selectedWorktreePath || isLoading}
             title="Refresh"
           >
-            ↻
-          </button>
-          <button
-            type="button"
-            className="md:hidden text-subtext1 hover:text-text"
+            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
             onClick={onRequestClose}
             aria-label="Close changes pane"
           >
-            ✕
-          </button>
+            <X size={14} />
+          </Button>
         </div>
       </div>
 
       <div className="flex-1 overflow-auto px-4 pb-4">
-        {selectedWorktreePath && !isLoading && !error && (
+        {selectedWorktreePath && (
           <div className="mb-6 space-y-2">
-            <input
+            <Input
               type="text"
               placeholder="Commit message..."
-              className="w-full bg-mantle border border-surface0 rounded-md px-3 py-2 text-sm text-text placeholder-subtext1 focus:outline-none focus:border-surface1 transition-colors"
             />
-            <button className="w-full cursor-pointer bg-mantle hover:bg-surface0 border border-surface0 text-text rounded-md py-1.5 text-sm font-medium transition-colors flex items-center justify-center gap-2">
-              ↑ Push
-            </button>
+            <Button className="w-full flex items-center justify-center gap-2">
+              <ArrowUp size={14} /> Push
+            </Button>
           </div>
         )}
 
@@ -313,7 +400,7 @@ export default function ChangesPane({
           </div>
         ) : null}
 
-        {selectedWorktreePath && isLoading ? (
+        {selectedWorktreePath && isLoading && changedFiles.length === 0 ? (
           <div className="p-4 text-subtext1 text-sm text-center">
             Loading changed files...
           </div>
@@ -321,7 +408,7 @@ export default function ChangesPane({
 
         {selectedWorktreePath && !isLoading && error ? (
           <div
-            className="bg-red/10 text-red p-3 rounded-md text-sm"
+            className="bg-red/10 text-red p-3 rounded-sm text-sm"
             role="alert"
           >
             <div className="font-semibold mb-1">Git status failed</div>
@@ -330,7 +417,7 @@ export default function ChangesPane({
         ) : null}
 
         {selectedWorktreePath &&
-        !isLoading &&
+        (!isLoading || changedFiles.length > 0) &&
         !error &&
         changedFiles.length === 0 ? (
           <div className="p-4 text-subtext1 text-sm text-center">
@@ -339,7 +426,7 @@ export default function ChangesPane({
         ) : null}
 
         {selectedWorktreePath &&
-        !isLoading &&
+        (!isLoading || changedFiles.length > 0) &&
         !error &&
         changedFiles.length > 0 ? (
           <ul className="space-y-1" data-testid="changed-file-list">
@@ -347,6 +434,56 @@ export default function ChangesPane({
           </ul>
         ) : null}
       </div>
+
+      <Modal
+        isOpen={!!viewingFile}
+        onClose={() => setViewingFile(null)}
+        title={viewingFile?.name ?? ""}
+      >
+        <div className="flex flex-col h-full overflow-hidden">
+          <div className="flex items-center gap-6 mb-4">
+            <div className="flex bg-base rounded-sm p-0.5 border border-surface0">
+              <Button
+                variant="tab"
+                size="sm"
+                isActive={viewMode === "diff"}
+                onClick={() => setViewMode("diff")}
+              >
+                Diff
+              </Button>
+              <Button
+                variant="tab"
+                size="sm"
+                isActive={viewMode === "content"}
+                onClick={() => setViewMode("content")}
+              >
+                Full File
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-auto bg-base font-mono">
+            {isFileLoading ? (
+              <div className="flex items-center justify-center h-full text-subtext1">
+                Loading...
+              </div>
+            ) : fileError ? (
+              <div className="p-8">
+                <div className="text-red p-4 bg-red/10 rounded-sm">{fileError}</div>
+              </div>
+            ) : (
+              <div className="py-4">
+                {viewMode === "diff" ? (
+                  fileDiff.split("\n").map(renderDiffLine)
+                ) : (
+                  <pre className="text-text whitespace-pre-wrap px-4 selection:bg-surface1">
+                    <code>{fileContent}</code>
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
     </aside>
   );
 }

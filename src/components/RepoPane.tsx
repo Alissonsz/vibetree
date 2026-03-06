@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, X, Settings2, FolderRoot, GitBranch } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorktreeChanges } from "../hooks/useWorktrees";
 import type { RepoInfo, WorktreeInfo } from "../types";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
+import { Card } from "./ui/Card";
 
 type RepoPaneProps = {
   mobileOpen: boolean;
@@ -20,7 +24,10 @@ type RepoPaneProps = {
   isGlobalStartupSaving?: boolean;
   globalStartupCommand: string;
   repoStartupCommandsByRepoId: Record<string, string>;
-  onSetRepoStartupCommand: (repoId: string, command: string | null) => Promise<void>;
+  onSetRepoStartupCommand: (
+    repoId: string,
+    command: string | null,
+  ) => Promise<void>;
   onSetGlobalStartupCommand: (command: string | null) => Promise<void>;
 };
 
@@ -34,7 +41,7 @@ function RepoWatch({ repoId, onWorktreesChanged }: RepoWatchProps) {
     (worktrees: WorktreeInfo[]) => {
       onWorktreesChanged?.(repoId, worktrees);
     },
-    [onWorktreesChanged, repoId]
+    [onWorktreesChanged, repoId],
   );
 
   useWorktreeChanges(repoId, handleWorktreesChanged);
@@ -60,15 +67,23 @@ export default function RepoPane({
   globalStartupCommand,
   repoStartupCommandsByRepoId,
   onSetRepoStartupCommand,
-  onSetGlobalStartupCommand
+  onSetGlobalStartupCommand,
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
-  const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
+  const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>(
+    {},
+  );
   const [configRepoId, setConfigRepoId] = useState<string | null>(null);
-  const [startupDraftByRepoId, setStartupDraftByRepoId] = useState<Record<string, string>>({});
-  const [startupSaveErrorByRepoId, setStartupSaveErrorByRepoId] = useState<Record<string, string>>({});
-  const [startupSavingByRepoId, setStartupSavingByRepoId] = useState<Record<string, boolean>>({});
+  const [startupDraftByRepoId, setStartupDraftByRepoId] = useState<
+    Record<string, string>
+  >({});
+  const [startupSaveErrorByRepoId, setStartupSaveErrorByRepoId] = useState<
+    Record<string, string>
+  >({});
+  const [startupSavingByRepoId, setStartupSavingByRepoId] = useState<
+    Record<string, boolean>
+  >({});
   const startupSaveInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -99,7 +114,7 @@ export default function RepoPane({
   const toggleExpanded = (repoId: string) => {
     setExpandedRepos((current) => ({
       ...current,
-      [repoId]: !(current[repoId] ?? true)
+      [repoId]: !(current[repoId] ?? true),
     }));
   };
 
@@ -136,21 +151,21 @@ export default function RepoPane({
     });
     setStartupSavingByRepoId((current) => ({
       ...current,
-      [repoId]: true
+      [repoId]: true,
     }));
 
     void operation()
       .catch(() => {
         setStartupSaveErrorByRepoId((current) => ({
           ...current,
-          [repoId]: "Unable to save startup command."
+          [repoId]: "Unable to save startup command.",
         }));
       })
       .finally(() => {
         startupSaveInFlightRef.current.delete(repoId);
         setStartupSavingByRepoId((current) => ({
           ...current,
-          [repoId]: false
+          [repoId]: false,
         }));
       });
   }
@@ -159,29 +174,33 @@ export default function RepoPane({
     <aside
       id="wb-repo-pane"
       className={`flex h-full min-h-0 flex-col overflow-hidden bg-base border-r border-surface0 ${
-        mobileOpen ? "fixed inset-y-0 left-0 w-4/5 z-50 shadow-2xl" : "hidden md:flex"
+        mobileOpen
+          ? "fixed inset-y-0 left-0 w-4/5 z-50 shadow-2xl"
+          : "hidden md:flex"
       }`}
       data-testid="repo-pane"
       role="complementary"
       aria-label="Repositories"
     >
       <div className="flex items-center justify-between p-4 mb-2">
-        <button
-          type="button"
-          className="text-sm font-medium text-subtext1 hover:text-text transition-colors flex items-center gap-2"
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-2"
           data-testid="add-repo-btn"
           onClick={() => void handleAddRepo()}
         >
-          <span className="text-lg leading-none">+</span> New Workspace
-        </button>
-        <button
-          type="button"
-          className="md:hidden text-subtext1 hover:text-text"
+          <Plus size={16} /> New Workspace
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="md:hidden"
           onClick={onRequestClose}
           aria-label="Close repositories pane"
         >
-          ✕
-        </button>
+          <X size={16} />
+        </Button>
       </div>
       <div className="flex-1 overflow-auto px-2 pb-4">
         {repoIds.map((repoId) => (
@@ -193,22 +212,30 @@ export default function RepoPane({
         ))}
 
         {notification && (
-          <div className="bg-red/10 text-red p-3 rounded-md mb-4 flex justify-between text-sm mx-2" role="status">
+          <Card
+            variant="error"
+            className="mb-4 flex justify-between items-center mx-2"
+          >
             <span>{notification}</span>
-            <button type="button" onClick={onDismissNotification} className="hover:text-text">
-              ✕
-            </button>
-          </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDismissNotification}
+              className="h-6 w-6"
+            >
+              <X size={14} />
+            </Button>
+          </Card>
         )}
 
         {startupConfigError ? (
-          <div
-            className="bg-yellow/10 text-yellow p-3 rounded-md mb-4 text-sm mx-2"
+          <Card
+            variant="warning"
+            className="mb-4 mx-2"
             data-testid="startup-config-error"
-            role="status"
           >
             {startupConfigError}
-          </div>
+          </Card>
         ) : null}
 
         {repos.length === 0 ? (
@@ -227,18 +254,23 @@ export default function RepoPane({
                   <div className="flex items-center justify-between group px-2 py-1 mb-1 relative min-h-7">
                     <button
                       type="button"
-                      className="text-xs font-semibold uppercase tracking-wider text-text inline-flex items-center gap-2 min-w-0 h-6 leading-none"
+                      className="text-xs font-semibold uppercase tracking-wider text-text inline-flex items-center gap-2 min-w-0 h-6 leading-none cursor-pointer"
                       onClick={() => toggleExpanded(repo.id)}
                     >
+                      <FolderRoot size={14} className="text-subtext1/70" />
                       <span className="truncate">{repo.name}</span>
                       <span className="inline-flex h-6 items-center text-subtext1 text-[10px] normal-case leading-none">
                         ({worktrees.length})
                       </span>
                     </button>
-                    <div className="relative ml-2 flex h-6 items-center" data-repo-config-root="true">
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 items-center justify-center rounded text-sm leading-none text-subtext1 transition-colors hover:bg-surface0/50 hover:text-text"
+                    <div
+                      className="relative ml-2 flex h-6 items-center"
+                      data-repo-config-root="true"
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
                         data-testid="repo-config-btn"
                         aria-label={`Configure ${repo.name}`}
                         aria-expanded={configRepoId === repo.id}
@@ -246,42 +278,50 @@ export default function RepoPane({
                         title="Workspace configuration"
                         onClick={() => {
                           const isOpening = configRepoId !== repo.id;
-                          setConfigRepoId((current) => (current === repo.id ? null : repo.id));
+                          setConfigRepoId((current) =>
+                            current === repo.id ? null : repo.id,
+                          );
                           if (isOpening) {
                             setStartupDraftByRepoId((current) => {
                               return {
                                 ...current,
                                 [repo.id]:
-                                  repoStartupCommandsByRepoId[repo.id] ?? globalStartupCommand
+                                  repoStartupCommandsByRepoId[repo.id] ??
+                                  globalStartupCommand,
                               };
                             });
                           }
                         }}
                       >
-                        ⚙
-                      </button>
+                        <Settings2 size={14} />
+                      </Button>
 
                       {configRepoId === repo.id ? (
                         <div
                           id={`repo-config-menu-${repo.id}`}
                           data-testid="repo-config-menu"
-                          className="absolute right-0 top-full z-30 mt-1 w-72 rounded-md border border-surface0 bg-mantle p-2 shadow-xl"
+                          className="absolute right-0 top-full z-30 mt-1 w-72 rounded-sm border border-surface0 bg-mantle p-2 shadow-xl"
                           role="menu"
                           aria-label={`${repo.name} workspace options`}
                         >
-                          <div className="rounded px-2 py-1.5 text-xs text-subtext1">
-                            <p className="text-[11px] uppercase tracking-wide text-subtext1/80">Terminal startup</p>
+                          <div className="px-2 py-1.5 text-xs text-subtext1">
+                            <p className="text-[11px] uppercase tracking-wide text-subtext1/80">
+                              Terminal startup
+                            </p>
                             <p className="mt-1 text-[11px] text-subtext1/80">
-                              {Object.prototype.hasOwnProperty.call(repoStartupCommandsByRepoId, repo.id)
+                              {Object.prototype.hasOwnProperty.call(
+                                repoStartupCommandsByRepoId,
+                                repo.id,
+                              )
                                 ? "Workspace override active."
                                 : globalStartupCommand
                                   ? "Using global default unless you override."
                                   : "No startup command configured."}
                             </p>
-                            <input
+                            <Input
                               type="text"
                               data-testid="repo-startup-command-input"
-                              className="mt-2 w-full rounded border border-surface0 bg-base px-2 py-1.5 text-xs text-text placeholder:text-subtext1/60 focus:border-blue focus:outline-none"
+                              className="mt-2"
                               placeholder="opencode, tmux, npm run dev..."
                               value={
                                 startupDraftByRepoId[repo.id] ??
@@ -292,16 +332,17 @@ export default function RepoPane({
                                 const value = event.target.value;
                                 setStartupDraftByRepoId((current) => ({
                                   ...current,
-                                  [repo.id]: value
+                                  [repo.id]: value,
                                 }));
                               }}
                               aria-label={`Startup command for ${repo.name}`}
                               disabled={isStartupSaving}
                             />
                             <div className="mt-2 flex items-center gap-1">
-                              <button
-                                type="button"
-                                className="rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="text-[11px]"
                                 data-testid="repo-save-workspace-startup-btn"
                                 onClick={() => {
                                   const command =
@@ -309,16 +350,17 @@ export default function RepoPane({
                                     repoStartupCommandsByRepoId[repo.id] ??
                                     globalStartupCommand;
                                   runStartupSave(repo.id, () =>
-                                    onSetRepoStartupCommand(repo.id, command)
+                                    onSetRepoStartupCommand(repo.id, command),
                                   );
                                 }}
                                 disabled={isStartupSaving}
                               >
                                 Save workspace
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="text-[11px]"
                                 data-testid="repo-save-global-startup-btn"
                                 onClick={() => {
                                   const command =
@@ -326,34 +368,44 @@ export default function RepoPane({
                                     repoStartupCommandsByRepoId[repo.id] ??
                                     globalStartupCommand;
                                   runStartupSave(repo.id, () =>
-                                    onSetGlobalStartupCommand(command)
+                                    onSetGlobalStartupCommand(command),
                                   );
                                 }}
-                                disabled={isStartupSaving || isGlobalStartupSaving}
+                                disabled={
+                                  isStartupSaving || isGlobalStartupSaving
+                                }
                               >
-                                {isGlobalStartupSaving ? "Saving global..." : "Save global"}
-                              </button>
+                                {isGlobalStartupSaving
+                                  ? "Saving global..."
+                                  : "Save global"}
+                              </Button>
                             </div>
-                            <button
-                              type="button"
-                              className="mt-2 rounded border border-surface0 px-2 py-1 text-[11px] text-subtext1 hover:bg-surface0/60 hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="mt-2 w-full text-[11px] border border-surface0"
                               data-testid="repo-use-global-startup-btn"
                               disabled={
                                 isStartupSaving ||
-                                !Object.prototype.hasOwnProperty.call(repoStartupCommandsByRepoId, repo.id)
+                                !Object.prototype.hasOwnProperty.call(
+                                  repoStartupCommandsByRepoId,
+                                  repo.id,
+                                )
                               }
                               onClick={() => {
                                 runStartupSave(repo.id, async () => {
                                   await onSetRepoStartupCommand(repo.id, null);
                                   setStartupDraftByRepoId((current) => ({
                                     ...current,
-                                    [repo.id]: globalStartupCommand
+                                    [repo.id]: globalStartupCommand,
                                   }));
                                 });
                               }}
                             >
-                              {isStartupSaving ? "Saving..." : "Use global default"}
-                            </button>
+                              {isStartupSaving
+                                ? "Saving..."
+                                : "Use global default"}
+                            </Button>
                             {startupSaveErrorByRepoId[repo.id] ? (
                               <p
                                 className="mt-2 text-[11px] text-red"
@@ -366,11 +418,11 @@ export default function RepoPane({
 
                           <div className="my-1 h-px bg-surface0" />
 
-                          <button
-                            type="button"
-                            className="w-full rounded px-2 py-1.5 text-left text-xs text-red hover:bg-surface0/60"
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            className="w-full justify-start px-2 py-1.5 text-xs bg-transparent border-none"
                             data-testid="remove-repo-btn"
-                            role="menuitem"
                             onClick={() => {
                               setConfigRepoId(null);
                               void handleRemoveRepo(repo.id);
@@ -378,7 +430,7 @@ export default function RepoPane({
                             aria-label={`Remove ${repo.name}`}
                           >
                             Remove workspace
-                          </button>
+                          </Button>
                         </div>
                       ) : null}
                     </div>
@@ -387,17 +439,19 @@ export default function RepoPane({
                   {expanded && (
                     <div className="space-y-0.5">
                       {worktrees.map((worktree: WorktreeInfo) => {
-                        const selected = selectedRepoId === repo.id && selectedWorktreePath === worktree.path;
+                        const selected =
+                          selectedRepoId === repo.id &&
+                          selectedWorktreePath === worktree.path;
 
                         return (
                           <div key={worktree.path} className="relative">
                             {selected && (
-                              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-blue rounded-full" />
+                              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-blue" />
                             )}
                             <button
                               type="button"
                               data-testid="worktree-item"
-                              className={`w-full text-left px-3 py-2 rounded-md text-sm truncate transition-colors ${
+                              className={`w-full text-left px-3 py-2 rounded-sm text-sm truncate transition-colors cursor-pointer group ${
                                 selected
                                   ? "bg-surface0/50 text-text"
                                   : "text-subtext1 hover:bg-surface0/30 hover:text-text"
@@ -407,13 +461,28 @@ export default function RepoPane({
                                 onRequestClose();
                               }}
                             >
-                              <div className="flex flex-col">
-                                <span className="font-medium truncate text-[13px]">
-                                  {worktree.branch?.replace("refs/heads/", "") || worktree.head.slice(0, 7)}
-                                </span>
-                                <span className="text-[10px] text-subtext1/60 truncate mt-0.5 font-mono">
-                                  {worktree.path.split('/').pop()}
-                                </span>
+                              <div className="flex items-center gap-3">
+                                <div className="shrink-0 w-4 flex items-center justify-center">
+                                  <GitBranch
+                                    size={14}
+                                    className={
+                                      selected
+                                        ? "text-blue"
+                                        : "text-subtext1/50 group-hover:text-text/50"
+                                    }
+                                  />
+                                </div>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="font-medium truncate text-[13px] leading-tight text-text">
+                                    {worktree.branch?.replace(
+                                      "refs/heads/",
+                                      "",
+                                    ) || worktree.head.slice(0, 7)}
+                                  </span>
+                                  <span className="text-[10px] text-subtext1/60 truncate font-mono leading-tight">
+                                    {worktree.path.split("/").pop()}
+                                  </span>
+                                </div>
                               </div>
                             </button>
                           </div>

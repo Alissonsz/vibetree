@@ -7,7 +7,10 @@ use std::sync::Mutex;
 
 use tauri::Manager;
 
-use changes::get_changed_files;
+use changes::{
+    get_changed_files, get_file_content, get_file_diff, start_watching_changes,
+    stop_watching_changes, ChangesService,
+};
 use repo::{
     add_repo, get_global_terminal_startup_command, get_last_selection,
     list_repo_terminal_startup_commands, list_repos, load_registry_or_default, remove_repo,
@@ -30,6 +33,7 @@ pub fn run() {
             app.manage(Mutex::new(registry));
             app.manage(Mutex::new(TerminalManager::default()));
             app.manage(Mutex::new(WorktreeService::default()));
+            app.manage(Mutex::new(ChangesService::default()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -43,6 +47,10 @@ pub fn run() {
             list_repo_terminal_startup_commands,
             set_repo_terminal_startup_command,
             get_changed_files,
+            get_file_content,
+            get_file_diff,
+            start_watching_changes,
+            stop_watching_changes,
             create_terminal_session,
             close_terminal_session,
             resize_terminal_session,
