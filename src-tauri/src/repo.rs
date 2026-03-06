@@ -14,6 +14,8 @@ const STORE_REPOS_KEY: &str = "repos";
 const STORE_LAST_SELECTION_KEY: &str = "last_selection";
 const STORE_GLOBAL_TERMINAL_STARTUP_COMMAND_KEY: &str = "global_terminal_startup_command";
 const STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY: &str = "repo_terminal_startup_commands";
+const STORE_GLOBAL_WORKTREE_BASE_DIR_KEY: &str = "global_worktree_base_dir";
+const STORE_REPO_WORKTREE_BASE_DIRS_KEY: &str = "repo_worktree_base_dirs";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoInfo {
@@ -28,6 +30,8 @@ pub struct RepoRegistry {
     last_selection: Option<String>,
     global_terminal_startup_command: Option<String>,
     repo_terminal_startup_commands: HashMap<String, String>,
+    global_worktree_base_dir: Option<String>,
+    repo_worktree_base_dirs: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +40,8 @@ struct RepoRegistryStore {
     last_selection: Option<String>,
     global_terminal_startup_command: Option<String>,
     repo_terminal_startup_commands: HashMap<String, String>,
+    global_worktree_base_dir: Option<String>,
+    repo_worktree_base_dirs: HashMap<String, String>,
 }
 
 trait RepoEnvironment {
@@ -105,21 +111,45 @@ impl RepoRegistry {
             .map_err(|error| format!("failed to parse repo terminal startup commands: {error}"))?
             .unwrap_or_default();
 
+        let global_worktree_base_dir = store
+            .get(STORE_GLOBAL_WORKTREE_BASE_DIR_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse global worktree base dir: {error}"))?
+            .unwrap_or(None);
+
+        let repo_worktree_base_dirs: HashMap<String, String> = store
+            .get(STORE_REPO_WORKTREE_BASE_DIRS_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse repo worktree base dirs: {error}"))?
+            .unwrap_or_default();
+
         let global_terminal_startup_command =
-            normalize_startup_command(global_terminal_startup_command);
+            normalize_string_value(global_terminal_startup_command);
         let repo_terminal_startup_commands: HashMap<String, String> =
             repo_terminal_startup_commands
                 .into_iter()
                 .filter_map(|(repo_id, command)| {
-                    normalize_startup_command(Some(command)).map(|normalized| (repo_id, normalized))
+                    normalize_string_value(Some(command)).map(|normalized| (repo_id, normalized))
                 })
                 .collect();
+                
+        let global_worktree_base_dir = normalize_string_value(global_worktree_base_dir);
+        let repo_worktree_base_dirs: HashMap<String, String> = repo_worktree_base_dirs
+            .into_iter()
+            .filter_map(|(repo_id, dir)| {
+                normalize_string_value(Some(dir)).map(|normalized| (repo_id, normalized))
+            })
+            .collect();
 
         Ok(Self {
             repos,
             last_selection,
             global_terminal_startup_command,
             repo_terminal_startup_commands,
+            global_worktree_base_dir,
+            repo_worktree_base_dirs,
         })
     }
 
@@ -145,6 +175,7 @@ impl RepoRegistry {
         }
 
         self.repo_terminal_startup_commands.remove(repo_id);
+        self.repo_worktree_base_dirs.remove(repo_id);
 
         Ok(())
     }
@@ -170,7 +201,7 @@ impl RepoRegistry {
     }
 
     pub fn set_global_terminal_startup_command(&mut self, command: Option<String>) {
-        self.global_terminal_startup_command = normalize_startup_command(command);
+        self.global_terminal_startup_command = normalize_string_value(command);
     }
 
     pub fn list_repo_terminal_startup_commands(&self) -> HashMap<String, String> {
@@ -187,13 +218,48 @@ impl RepoRegistry {
             return Err(format!("repository '{repo_id}' was not found"));
         }
 
-        match normalize_startup_command(command) {
+        match normalize_string_value(command) {
             Some(normalized) => {
                 self.repo_terminal_startup_commands
                     .insert(repo_id.to_string(), normalized);
             }
             None => {
                 self.repo_terminal_startup_commands.remove(repo_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get_global_worktree_base_dir(&self) -> Option<String> {
+        self.global_worktree_base_dir.clone()
+    }
+
+    pub fn set_global_worktree_base_dir(&mut self, dir: Option<String>) {
+        self.global_worktree_base_dir = normalize_string_value(dir);
+    }
+
+    pub fn list_repo_worktree_base_dirs(&self) -> HashMap<String, String> {
+        self.repo_worktree_base_dirs.clone()
+    }
+
+    pub fn set_repo_worktree_base_dir(
+        &mut self,
+        repo_id: &str,
+        dir: Option<String>,
+    ) -> Result<(), String> {
+        let repo_exists = self.repos.iter().any(|repo| repo.id == repo_id);
+        if !repo_exists {
+            return Err(format!("repository '{repo_id}' was not found"));
+        }
+
+        match normalize_string_value(dir) {
+            Some(normalized) => {
+                self.repo_worktree_base_dirs
+                    .insert(repo_id.to_string(), normalized);
+            }
+            None => {
+                self.repo_worktree_base_dirs.remove(repo_id);
             }
         }
 
@@ -211,6 +277,8 @@ impl RepoRegistry {
             last_selection: self.last_selection.clone(),
             global_terminal_startup_command: self.global_terminal_startup_command.clone(),
             repo_terminal_startup_commands: self.repo_terminal_startup_commands.clone(),
+            global_worktree_base_dir: self.global_worktree_base_dir.clone(),
+            repo_worktree_base_dirs: self.repo_worktree_base_dirs.clone(),
         };
 
         store.set(
@@ -233,6 +301,18 @@ impl RepoRegistry {
             STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY,
             serde_json::to_value(payload.repo_terminal_startup_commands).map_err(|error| {
                 format!("failed to serialize repo terminal startup commands: {error}")
+            })?,
+        );
+        store.set(
+            STORE_GLOBAL_WORKTREE_BASE_DIR_KEY,
+            serde_json::to_value(payload.global_worktree_base_dir).map_err(|error| {
+                format!("failed to serialize global worktree base dir: {error}")
+            })?,
+        );
+        store.set(
+            STORE_REPO_WORKTREE_BASE_DIRS_KEY,
+            serde_json::to_value(payload.repo_worktree_base_dirs).map_err(|error| {
+                format!("failed to serialize repo worktree base dirs: {error}")
             })?,
         );
         store
@@ -373,7 +453,46 @@ pub fn set_repo_terminal_startup_command(
     registry.persist(&app)
 }
 
-fn normalize_startup_command(command: Option<String>) -> Option<String> {
+#[tauri::command]
+pub fn get_global_worktree_base_dir(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<Option<String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.get_global_worktree_base_dir())
+}
+
+#[tauri::command]
+pub fn set_global_worktree_base_dir(
+    dir: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_global_worktree_base_dir(dir);
+    registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn list_repo_worktree_base_dirs(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<HashMap<String, String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.list_repo_worktree_base_dirs())
+}
+
+#[tauri::command]
+pub fn set_repo_worktree_base_dir(
+    repo_id: String,
+    dir: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_repo_worktree_base_dir(&repo_id, dir)?;
+    registry.persist(&app)
+}
+
+fn normalize_string_value(command: Option<String>) -> Option<String> {
     command.and_then(|value| {
         let single_line = value.replace(['\r', '\n'], " ");
         let trimmed = single_line.trim();

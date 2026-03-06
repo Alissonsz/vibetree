@@ -63,7 +63,7 @@ describe("appStateReducer", () => {
       worktrees: [firstWorktree]
     });
     expect(state.selectedWorktreePath).toBe(firstWorktree.path);
-    expect(state.notification).toBe("Selected worktree is no longer available.");
+    expect(state.notification).toBe(null);
 
     state = appStateReducer(state, {
       type: "REMOVE_REPO",

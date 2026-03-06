@@ -52,6 +52,9 @@ export default function Layout() {
   const [isGlobalStartupSaving, setIsGlobalStartupSaving] = useState(false);
   const [globalTerminalStartupCommand, setGlobalTerminalStartupCommand] = useState<string | null>(null);
   const [repoTerminalStartupByRepoId, setRepoTerminalStartupByRepoId] = useState<Record<string, string>>({});
+  
+  const [globalWorktreeBaseDir, setGlobalWorktreeBaseDir] = useState<string | null>(null);
+  const [repoWorktreeBaseDirsByRepoId, setRepoWorktreeBaseDirsByRepoId] = useState<Record<string, string>>({});
 
   const {
     state,
@@ -62,7 +65,7 @@ export default function Layout() {
     clearNotification
   } = useAppState();
 
-  const normalizeStartupCommand = useCallback((command: string | null) => {
+  const normalizeConfigValue = useCallback((command: string | null) => {
     if (command === null) return null;
 
     const singleLine = command.replace(/[\r\n]+/g, " ");
@@ -73,20 +76,31 @@ export default function Layout() {
   useEffect(() => {
     let active = true;
 
-    async function loadTerminalStartupConfig() {
+    async function loadConfig() {
       try {
-        const [globalCommand, repoCommands] = await Promise.all([
+        const [globalCommand, repoCommands, globalBaseDir, repoBaseDirs] = await Promise.all([
           reposClient.getGlobalTerminalStartupCommand(),
-          reposClient.listRepoTerminalStartupCommands()
+          reposClient.listRepoTerminalStartupCommands(),
+          reposClient.getGlobalWorktreeBaseDir(),
+          reposClient.listRepoWorktreeBaseDirs()
         ]);
 
         if (!active) return;
         if (!startupConfigMutatedRef.current) {
-          setGlobalTerminalStartupCommand(normalizeStartupCommand(globalCommand));
+          setGlobalTerminalStartupCommand(normalizeConfigValue(globalCommand));
           setRepoTerminalStartupByRepoId(
             Object.fromEntries(
               Object.entries(repoCommands)
-                .map(([repoId, command]) => [repoId, normalizeStartupCommand(command)])
+                .map(([repoId, command]) => [repoId, normalizeConfigValue(command)])
+              .filter((entry): entry is [string, string] => entry[1] !== null)
+            )
+          );
+          
+          setGlobalWorktreeBaseDir(normalizeConfigValue(globalBaseDir));
+          setRepoWorktreeBaseDirsByRepoId(
+            Object.fromEntries(
+              Object.entries(repoBaseDirs)
+                .map(([repoId, dir]) => [repoId, normalizeConfigValue(dir)])
               .filter((entry): entry is [string, string] => entry[1] !== null)
             )
           );
@@ -95,7 +109,7 @@ export default function Layout() {
       } catch {
         if (active) {
           setStartupConfigError(
-            "Unable to load terminal startup configuration. Using defaults until settings are saved again."
+            "Unable to load configuration. Using defaults until settings are saved again."
           );
         }
       } finally {
@@ -105,16 +119,28 @@ export default function Layout() {
       }
     }
 
-    void loadTerminalStartupConfig();
+    void loadConfig();
 
     return () => {
       active = false;
     };
-  }, [reposClient, normalizeStartupCommand]);
+  }, [reposClient, normalizeConfigValue]);
 
   useEffect(() => {
     const repoIdSet = new Set(state.repos.map((repo) => repo.id));
     setRepoTerminalStartupByRepoId((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([repoId]) => repoIdSet.has(repoId))
+      );
+
+      if (Object.keys(next).length === Object.keys(current).length) {
+        return current;
+      }
+
+      return next;
+    });
+    
+    setRepoWorktreeBaseDirsByRepoId((current) => {
       const next = Object.fromEntries(
         Object.entries(current).filter(([repoId]) => repoIdSet.has(repoId))
       );
@@ -225,8 +251,8 @@ export default function Layout() {
           repoStartupCommandsByRepoId={repoTerminalStartupByRepoId}
           onSetRepoStartupCommand={async (repoId: string, command: string | null) => {
             startupConfigMutatedRef.current = true;
-            const normalized = normalizeStartupCommand(command);
-            const globalNormalized = normalizeStartupCommand(globalTerminalStartupCommand);
+            const normalized = normalizeConfigValue(command);
+            const globalNormalized = normalizeConfigValue(globalTerminalStartupCommand);
             const nextRepoOverride = normalized === globalNormalized ? null : normalized;
 
             await reposClient.setRepoTerminalStartupCommand(repoId, nextRepoOverride);
@@ -249,7 +275,7 @@ export default function Layout() {
             globalStartupSaveInFlightRef.current = true;
             setIsGlobalStartupSaving(true);
             startupConfigMutatedRef.current = true;
-            const normalized = normalizeStartupCommand(command);
+            const normalized = normalizeConfigValue(command);
             try {
               await reposClient.setGlobalTerminalStartupCommand(normalized);
               setGlobalTerminalStartupCommand(normalized);
@@ -258,6 +284,30 @@ export default function Layout() {
               globalStartupSaveInFlightRef.current = false;
               setIsGlobalStartupSaving(false);
             }
+          }}
+          globalWorktreeBaseDir={globalWorktreeBaseDir ?? ""}
+          repoWorktreeBaseDirsByRepoId={repoWorktreeBaseDirsByRepoId}
+          onSetRepoWorktreeBaseDir={async (repoId: string, dir: string | null) => {
+            startupConfigMutatedRef.current = true;
+            const normalized = normalizeConfigValue(dir);
+            const globalNormalized = normalizeConfigValue(globalWorktreeBaseDir);
+            const nextOverride = normalized === globalNormalized ? null : normalized;
+
+            await reposClient.setRepoWorktreeBaseDir(repoId, nextOverride);
+            setRepoWorktreeBaseDirsByRepoId(current => {
+              const next = { ...current };
+              if (nextOverride === null) delete next[repoId];
+              else next[repoId] = nextOverride;
+              return next;
+            });
+            setStartupConfigError(null);
+          }}
+          onSetGlobalWorktreeBaseDir={async (dir: string | null) => {
+            startupConfigMutatedRef.current = true;
+            const normalized = normalizeConfigValue(dir);
+            await reposClient.setGlobalWorktreeBaseDir(normalized);
+            setGlobalWorktreeBaseDir(normalized);
+            setStartupConfigError(null);
           }}
         />
 

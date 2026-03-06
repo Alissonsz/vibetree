@@ -66,6 +66,10 @@ describe("RepoPane", () => {
         repoStartupCommandsByRepoId={{}}
         onSetRepoStartupCommand={setRepoStartupCommand}
         onSetGlobalStartupCommand={setGlobalStartupCommand}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
       />
     );
 
@@ -137,6 +141,10 @@ describe("RepoPane", () => {
         onSetGlobalStartupCommand={vi.fn(async () => {
           return;
         })}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
       />
     );
 
@@ -191,6 +199,10 @@ describe("RepoPane", () => {
         onSetGlobalStartupCommand={vi.fn(async () => {
           return;
         })}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
       />
     );
 
@@ -248,7 +260,11 @@ describe("RepoPane", () => {
       }),
       onSetGlobalStartupCommand: vi.fn(async () => {
         return;
-      })
+      }),
+      globalWorktreeBaseDir: "",
+      repoWorktreeBaseDirsByRepoId: {},
+      onSetRepoWorktreeBaseDir: vi.fn(async () => {}),
+      onSetGlobalWorktreeBaseDir: vi.fn(async () => {})
     };
 
     const { rerender } = render(

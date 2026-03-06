@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, X, Settings2, FolderRoot, GitBranch } from "lucide-react";
+import { Plus, X, Settings2, FolderRoot, GitBranch, Trash, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useWorktreeChanges } from "../hooks/useWorktrees";
-import type { RepoInfo, WorktreeInfo } from "../types";
+import { useWorktreeChanges, removeWorktree } from "../hooks/useWorktrees";
+import { getChangedFiles } from "../hooks/useChanges";
+import type { RepoInfo, WorktreeInfo, ChangedFile } from "../types";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { Card } from "./ui/Card";
+import { Modal } from "./ui/Modal";
+import { CreateWorktreeModal } from "./CreateWorktreeModal";
 
 type RepoPaneProps = {
   mobileOpen: boolean;
@@ -29,6 +32,13 @@ type RepoPaneProps = {
     command: string | null,
   ) => Promise<void>;
   onSetGlobalStartupCommand: (command: string | null) => Promise<void>;
+  globalWorktreeBaseDir: string;
+  repoWorktreeBaseDirsByRepoId: Record<string, string>;
+  onSetRepoWorktreeBaseDir: (
+    repoId: string,
+    dir: string | null,
+  ) => Promise<void>;
+  onSetGlobalWorktreeBaseDir: (dir: string | null) => Promise<void>;
 };
 
 type RepoWatchProps = {
@@ -68,6 +78,10 @@ export default function RepoPane({
   repoStartupCommandsByRepoId,
   onSetRepoStartupCommand,
   onSetGlobalStartupCommand,
+  globalWorktreeBaseDir,
+  repoWorktreeBaseDirsByRepoId,
+  onSetRepoWorktreeBaseDir,
+  onSetGlobalWorktreeBaseDir,
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
@@ -78,6 +92,9 @@ export default function RepoPane({
   const [startupDraftByRepoId, setStartupDraftByRepoId] = useState<
     Record<string, string>
   >({});
+  const [baseDirDraftByRepoId, setBaseDirDraftByRepoId] = useState<
+    Record<string, string>
+  >({});
   const [startupSaveErrorByRepoId, setStartupSaveErrorByRepoId] = useState<
     Record<string, string>
   >({});
@@ -85,6 +102,57 @@ export default function RepoPane({
     Record<string, boolean>
   >({});
   const startupSaveInFlightRef = useRef<Set<string>>(new Set());
+
+  const [createWorktreeRepoId, setCreateWorktreeRepoId] = useState<string | null>(null);
+  const [removingWorktrees, setRemovingWorktrees] = useState<Set<string>>(new Set());
+  const [forceRemovePrompt, setForceRemovePrompt] = useState<{
+    repoPath: string;
+    worktreePath: string;
+    error?: string;
+    changes?: ChangedFile[];
+  } | null>(null);
+
+  const handleRemoveWorktree = async (repoPath: string, worktreePath: string, force: boolean = false) => {
+    if (force) {
+      setForceRemovePrompt(null);
+    }
+    setRemovingWorktrees((prev) => new Set(prev).add(worktreePath));
+    try {
+      if (!force) {
+        try {
+          const changes = await getChangedFiles(worktreePath);
+          if (changes.length > 0) {
+            setForceRemovePrompt({
+              repoPath,
+              worktreePath,
+              changes,
+            });
+            return;
+          }
+        } catch (e) {
+          // Ignore if getChangedFiles fails (e.g., path doesn't exist), just try removing
+        }
+      }
+      
+      await removeWorktree(repoPath, worktreePath, force);
+    } catch (err) {
+      if (!force) {
+        setForceRemovePrompt({
+          repoPath,
+          worktreePath,
+          error: String(err).replace(/^fatal:\s*/i, ""),
+        });
+      } else {
+        window.alert(`Force remove failed: ${String(err)}`);
+      }
+    } finally {
+      setRemovingWorktrees((prev) => {
+        const next = new Set(prev);
+        next.delete(worktreePath);
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     if (!configRepoId) return;
@@ -270,6 +338,16 @@ export default function RepoPane({
                       <Button
                         variant="ghost"
                         size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label={`Create worktree in ${repo.name}`}
+                        title="Create worktree"
+                        onClick={() => setCreateWorktreeRepoId(repo.id)}
+                      >
+                        <Plus size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         className="h-6 w-6"
                         data-testid="repo-config-btn"
                         aria-label={`Configure ${repo.name}`}
@@ -414,6 +492,110 @@ export default function RepoPane({
                                 {startupSaveErrorByRepoId[repo.id]}
                               </p>
                             ) : null}
+
+                            <div className="my-3 h-px bg-surface0" />
+
+                            <p className="text-[11px] uppercase tracking-wide text-subtext1/80">
+                              Worktree base path (relative)
+                            </p>
+                            <p className="mt-1 text-[11px] text-subtext1/80">
+                              {Object.prototype.hasOwnProperty.call(
+                                repoWorktreeBaseDirsByRepoId,
+                                repo.id,
+                              )
+                                ? "Workspace override active."
+                                : globalWorktreeBaseDir
+                                  ? "Using global default unless you override."
+                                  : "Defaulting to workspace root."}
+                            </p>
+                            <Input
+                              type="text"
+                              data-testid="repo-basedir-input"
+                              className="mt-2"
+                              placeholder="../.worktrees"
+                              value={
+                                baseDirDraftByRepoId[repo.id] ??
+                                repoWorktreeBaseDirsByRepoId[repo.id] ??
+                                globalWorktreeBaseDir
+                              }
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setBaseDirDraftByRepoId((current) => ({
+                                  ...current,
+                                  [repo.id]: value,
+                                }));
+                              }}
+                              aria-label={`Worktree base path for ${repo.name}`}
+                              disabled={isStartupSaving}
+                            />
+                            <div className="mt-2 flex items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="text-[11px]"
+                                data-testid="repo-save-workspace-basedir-btn"
+                                onClick={() => {
+                                  const dir =
+                                    baseDirDraftByRepoId[repo.id] ??
+                                    repoWorktreeBaseDirsByRepoId[repo.id] ??
+                                    globalWorktreeBaseDir;
+                                  runStartupSave(repo.id, () =>
+                                    onSetRepoWorktreeBaseDir(repo.id, dir),
+                                  );
+                                }}
+                                disabled={isStartupSaving}
+                              >
+                                Save workspace
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="text-[11px]"
+                                data-testid="repo-save-global-basedir-btn"
+                                onClick={() => {
+                                  const dir =
+                                    baseDirDraftByRepoId[repo.id] ??
+                                    repoWorktreeBaseDirsByRepoId[repo.id] ??
+                                    globalWorktreeBaseDir;
+                                  runStartupSave(repo.id, () =>
+                                    onSetGlobalWorktreeBaseDir(dir),
+                                  );
+                                }}
+                                disabled={
+                                  isStartupSaving || isGlobalStartupSaving
+                                }
+                              >
+                                {isGlobalStartupSaving
+                                  ? "Saving global..."
+                                  : "Save global"}
+                              </Button>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="mt-2 w-full text-[11px] border border-surface0"
+                              data-testid="repo-use-global-basedir-btn"
+                              disabled={
+                                isStartupSaving ||
+                                !Object.prototype.hasOwnProperty.call(
+                                  repoWorktreeBaseDirsByRepoId,
+                                  repo.id,
+                                )
+                              }
+                              onClick={() => {
+                                runStartupSave(repo.id, async () => {
+                                  await onSetRepoWorktreeBaseDir(repo.id, null);
+                                  setBaseDirDraftByRepoId((current) => ({
+                                    ...current,
+                                    [repo.id]: globalWorktreeBaseDir,
+                                  }));
+                                });
+                              }}
+                            >
+                              {isStartupSaving
+                                ? "Saving..."
+                                : "Use global default"}
+                            </Button>
                           </div>
 
                           <div className="my-1 h-px bg-surface0" />
@@ -451,7 +633,7 @@ export default function RepoPane({
                             <button
                               type="button"
                               data-testid="worktree-item"
-                              className={`w-full text-left px-3 py-2 rounded-sm text-sm truncate transition-colors cursor-pointer group ${
+                              className={`w-full text-left px-3 py-2 rounded-sm text-sm truncate transition-colors cursor-pointer group/wt ${
                                 selected
                                   ? "bg-surface0/50 text-text"
                                   : "text-subtext1 hover:bg-surface0/30 hover:text-text"
@@ -461,27 +643,50 @@ export default function RepoPane({
                                 onRequestClose();
                               }}
                             >
-                              <div className="flex items-center gap-3">
-                                <div className="shrink-0 w-4 flex items-center justify-center">
-                                  <GitBranch
-                                    size={14}
-                                    className={
-                                      selected
-                                        ? "text-blue"
-                                        : "text-subtext1/50 group-hover:text-text/50"
-                                    }
-                                  />
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="shrink-0 w-4 flex items-center justify-center">
+                                    <GitBranch
+                                      size={14}
+                                      className={
+                                        selected
+                                          ? "text-blue"
+                                          : "text-subtext1/50 group-hover/wt:text-text/50"
+                                      }
+                                    />
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="font-medium truncate text-[13px] leading-tight text-text">
+                                      {worktree.branch?.replace(
+                                        "refs/heads/",
+                                        "",
+                                      ) || worktree.head.slice(0, 7)}
+                                    </span>
+                                    <span className="text-[10px] text-subtext1/60 truncate font-mono leading-tight">
+                                      {worktree.path.split("/").pop()}
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="font-medium truncate text-[13px] leading-tight text-text">
-                                    {worktree.branch?.replace(
-                                      "refs/heads/",
-                                      "",
-                                    ) || worktree.head.slice(0, 7)}
-                                  </span>
-                                  <span className="text-[10px] text-subtext1/60 truncate font-mono leading-tight">
-                                    {worktree.path.split("/").pop()}
-                                  </span>
+                                <div className={`shrink-0 flex items-center transition-opacity ${removingWorktrees.has(worktree.path) ? "opacity-100" : "opacity-0 group-hover/wt:opacity-100"}`}>
+                                  {removingWorktrees.has(worktree.path) ? (
+                                    <div className="h-6 w-6 flex items-center justify-center text-subtext1">
+                                      <Loader2 size={12} className="animate-spin" />
+                                    </div>
+                                  ) : (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 hover:text-red hover:bg-red/10"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleRemoveWorktree(repo.path, worktree.path);
+                                      }}
+                                      aria-label="Remove worktree"
+                                      title="Remove worktree"
+                                    >
+                                      <Trash size={12} />
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
                             </button>
@@ -496,6 +701,68 @@ export default function RepoPane({
           </div>
         )}
       </div>
+
+      <CreateWorktreeModal
+        isOpen={createWorktreeRepoId !== null}
+        onClose={() => setCreateWorktreeRepoId(null)}
+        repoPath={repos.find((r) => r.id === createWorktreeRepoId)?.path || ""}
+        baseDir={
+          createWorktreeRepoId
+            ? repoWorktreeBaseDirsByRepoId[createWorktreeRepoId] ?? globalWorktreeBaseDir ?? ""
+            : ""
+        }
+      />
+
+      <Modal
+        isOpen={forceRemovePrompt !== null}
+        onClose={() => setForceRemovePrompt(null)}
+        title="Uncommitted Changes"
+        maxWidth="max-w-md"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setForceRemovePrompt(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (forceRemovePrompt) {
+                  void handleRemoveWorktree(forceRemovePrompt.repoPath, forceRemovePrompt.worktreePath, true);
+                }
+              }}
+            >
+              Force Remove
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text">
+            {forceRemovePrompt?.changes ? "This worktree contains uncommitted files:" : "Failed to remove worktree. It might have uncommitted changes or be unclean."}
+          </p>
+          
+          {forceRemovePrompt?.changes ? (
+            <div className="max-h-48 overflow-y-auto border border-surface0 rounded-sm bg-mantle p-2 space-y-1">
+              {forceRemovePrompt.changes.map((file, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs font-mono">
+                  <span className={`w-3 text-center shrink-0 ${file.status === 'Modified' ? 'text-blue' : file.status === 'Added' || file.status === 'Untracked' ? 'text-green' : file.status === 'Deleted' ? 'text-red' : 'text-subtext1'}`}>
+                    {file.status === 'Modified' ? 'M' : file.status === 'Added' ? 'A' : file.status === 'Untracked' ? 'U' : file.status === 'Deleted' ? 'D' : file.status.charAt(0)}
+                  </span>
+                  <span className="text-subtext1 truncate" title={file.path}>{file.path}</span>
+                </div>
+              ))}
+            </div>
+          ) : forceRemovePrompt?.error ? (
+            <div className="p-2 text-xs text-red bg-red/10 border border-red/20 rounded-sm font-mono whitespace-pre-wrap break-all">
+              {forceRemovePrompt.error}
+            </div>
+          ) : null}
+
+          <p className="text-sm text-text">
+            Do you want to force remove it?
+          </p>
+        </div>
+      </Modal>
     </aside>
   );
 }

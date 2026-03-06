@@ -172,11 +172,7 @@ export function appStateReducer(
         repos: nextRepos,
         worktreesByRepoId: nextWorktreesByRepoId,
         selectedRepoId: nextSelection.selectedRepoId,
-        selectedWorktreePath: nextSelection.selectedWorktreePath,
-        notification:
-          state.selectedWorktreePath !== null
-            ? "Selected worktree is no longer available."
-            : state.notification
+        selectedWorktreePath: nextSelection.selectedWorktreePath
       };
     }
 
@@ -229,8 +225,7 @@ export function appStateReducer(
       return {
         ...state,
         worktreesByRepoId: nextWorktreesByRepoId,
-        selectedWorktreePath: action.worktrees[0]?.path ?? null,
-        notification: "Selected worktree is no longer available."
+        selectedWorktreePath: action.worktrees[0]?.path ?? null
       };
     }
 

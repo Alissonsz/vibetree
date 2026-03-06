@@ -16,6 +16,10 @@ export type ReposClient = {
   setGlobalTerminalStartupCommand: (command: string | null) => Promise<void>;
   listRepoTerminalStartupCommands: () => Promise<Record<string, string>>;
   setRepoTerminalStartupCommand: (repoId: string, command: string | null) => Promise<void>;
+  getGlobalWorktreeBaseDir: () => Promise<string | null>;
+  setGlobalWorktreeBaseDir: (dir: string | null) => Promise<void>;
+  listRepoWorktreeBaseDirs: () => Promise<Record<string, string>>;
+  setRepoWorktreeBaseDir: (repoId: string, dir: string | null) => Promise<void>;
 };
 
 export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
@@ -32,7 +36,15 @@ export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
     listRepoTerminalStartupCommands: () =>
       invokeFn<Record<string, string>>("list_repo_terminal_startup_commands"),
     setRepoTerminalStartupCommand: (repoId, command) =>
-      invokeFn<void>("set_repo_terminal_startup_command", { repoId, command })
+      invokeFn<void>("set_repo_terminal_startup_command", { repoId, command }),
+    getGlobalWorktreeBaseDir: () =>
+      invokeFn<string | null>("get_global_worktree_base_dir"),
+    setGlobalWorktreeBaseDir: (dir) =>
+      invokeFn<void>("set_global_worktree_base_dir", { dir }),
+    listRepoWorktreeBaseDirs: () =>
+      invokeFn<Record<string, string>>("list_repo_worktree_base_dirs"),
+    setRepoWorktreeBaseDir: (repoId, dir) =>
+      invokeFn<void>("set_repo_worktree_base_dir", { repoId, dir })
   };
 }
 

@@ -25,7 +25,7 @@ const Modal = ({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8 bg-crust/80 backdrop-blur-sm">
-      <div className={`flex flex-col w-full h-full ${maxWidth} bg-base rounded-sm border border-surface0 shadow-2xl overflow-hidden ${className}`}>
+      <div className={`flex flex-col w-full max-h-full ${maxWidth} bg-base rounded-sm border border-surface0 shadow-2xl overflow-hidden ${className}`}>
         <div className="flex items-center justify-between p-4 border-b border-surface0 bg-mantle shrink-0">
           <div className="flex items-center gap-6">
             <span className="text-sm font-medium text-text">{title}</span>

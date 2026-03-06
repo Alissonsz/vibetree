@@ -396,6 +396,103 @@ pub fn list_worktrees(
     service.list_worktrees(&repo_path)
 }
 
+#[tauri::command]
+pub async fn add_worktree(
+    repo_path: String,
+    path: String,
+    branch: Option<String>,
+    base_ref: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("-C").arg(&repo_path).arg("worktree").arg("add");
+
+        if let Some(b) = branch {
+            cmd.arg("-b").arg(&b);
+        }
+        
+        cmd.arg(&path);
+        
+        if let Some(r) = base_ref {
+            cmd.arg(&r);
+        }
+        
+        let output = cmd.output().map_err(|e| format!("failed to execute git command: {e}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {}", e))?
+}
+
+#[tauri::command]
+pub async fn remove_worktree(
+    repo_path: String,
+    worktree_path: String,
+    force: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("-C").arg(&repo_path).arg("worktree").arg("remove");
+        if force {
+            cmd.arg("--force");
+        }
+        cmd.arg(&worktree_path);
+        
+        let output = cmd.output().map_err(|e| format!("failed to execute git command: {e}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {}", e))?
+}
+
+#[tauri::command]
+pub fn list_branches(repo_path: String) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("for-each-ref")
+        .arg("--format=%(refname:short)")
+        .arg("refs/heads/")
+        .output()
+        .map_err(|e| format!("failed to execute git command: {e}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| format!("invalid git command output: {e}"))?;
+    
+    Ok(stdout.lines().map(|s| s.to_string()).collect())
+}
+
+#[tauri::command]
+pub fn get_current_branch(repo_path: String) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()
+        .map_err(|e| format!("failed to execute git command: {e}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| format!("invalid git command output: {e}"))?;
+        
+    Ok(stdout.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;

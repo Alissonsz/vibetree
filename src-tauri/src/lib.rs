@@ -12,15 +12,20 @@ use changes::{
     stop_watching_changes, ChangesService,
 };
 use repo::{
-    add_repo, get_global_terminal_startup_command, get_last_selection,
-    list_repo_terminal_startup_commands, list_repos, load_registry_or_default, remove_repo,
-    set_global_terminal_startup_command, set_last_selection, set_repo_terminal_startup_command,
+    add_repo, get_global_terminal_startup_command, get_global_worktree_base_dir,
+    get_last_selection, list_repo_terminal_startup_commands, list_repo_worktree_base_dirs,
+    list_repos, load_registry_or_default, remove_repo, set_global_terminal_startup_command,
+    set_global_worktree_base_dir, set_last_selection, set_repo_terminal_startup_command,
+    set_repo_worktree_base_dir,
 };
 use terminal::{
     close_terminal_session, create_terminal_session, list_terminal_sessions,
     resize_terminal_session, write_terminal_input, TerminalManager,
 };
-use worktree::{list_worktrees, start_watching_repo, stop_watching_repo, WorktreeService};
+use worktree::{
+    add_worktree, get_current_branch, list_branches, list_worktrees, remove_worktree,
+    start_watching_repo, stop_watching_repo, WorktreeService,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -46,6 +51,10 @@ pub fn run() {
             set_global_terminal_startup_command,
             list_repo_terminal_startup_commands,
             set_repo_terminal_startup_command,
+            get_global_worktree_base_dir,
+            set_global_worktree_base_dir,
+            list_repo_worktree_base_dirs,
+            set_repo_worktree_base_dir,
             get_changed_files,
             get_file_content,
             get_file_diff,
@@ -58,7 +67,11 @@ pub fn run() {
             list_terminal_sessions,
             start_watching_repo,
             stop_watching_repo,
-            list_worktrees
+            list_worktrees,
+            add_worktree,
+            remove_worktree,
+            list_branches,
+            get_current_branch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
