@@ -103,6 +103,7 @@ describe("TerminalPane", () => {
         startupCommand="opencode"
         startupConfigReady={true}
         attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        attentionRuntimeCapability={{ supported: true, reason: null }}
         worktreeDefaultAttentionProfileByPath={{}}
         onSetWorktreeDefaultAttentionProfile={vi.fn(async () => {
           return;
@@ -151,6 +152,7 @@ describe("TerminalPane", () => {
         startupCommand="opencode"
         startupConfigReady={true}
         attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        attentionRuntimeCapability={{ supported: true, reason: null }}
         worktreeDefaultAttentionProfileByPath={{ "/tmp/repo-a": "opencode" }}
         onSetWorktreeDefaultAttentionProfile={vi.fn(async () => {
           return;
@@ -216,6 +218,7 @@ describe("TerminalPane", () => {
         startupCommand="opencode"
         startupConfigReady={true}
         attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        attentionRuntimeCapability={{ supported: true, reason: null }}
         worktreeDefaultAttentionProfileByPath={{ "/tmp/repo-a": "opencode" }}
         onSetWorktreeDefaultAttentionProfile={setWorktreeDefaultAttentionProfile}
       />
@@ -230,6 +233,60 @@ describe("TerminalPane", () => {
 
     await waitFor(() => {
       expect(setWorktreeDefaultAttentionProfile).toHaveBeenCalledWith("/tmp/repo-a", null);
+    });
+  });
+
+  it("shows warning when enabling attention in unsupported runtime", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "create_terminal_session") {
+        return "session-1" as unknown as never;
+      }
+      return undefined as never;
+    });
+
+    const worktree = {
+      path: "/tmp/repo-a",
+      head: "abc",
+      branch: "main",
+      is_bare: false
+    };
+
+    render(
+      <TerminalPane
+        repoOpen={false}
+        changesOpen={false}
+        onToggleRepo={vi.fn()}
+        onToggleChanges={vi.fn()}
+        selectedWorktreePath="/tmp/repo-a"
+        selectedWorktree={worktree}
+        startupCommand="opencode"
+        startupConfigReady={true}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        attentionRuntimeCapability={{
+          supported: false,
+          reason: "Current session is TTY-only, so window attention blinking is unavailable."
+        }}
+        worktreeDefaultAttentionProfileByPath={{ "/tmp/repo-a": "opencode" }}
+        onSetWorktreeDefaultAttentionProfile={vi.fn(async () => {
+          return;
+        })}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Attention:").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Codex/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Current session is TTY-only, so window attention blinking is unavailable."
+        )
+      ).toBeInTheDocument();
     });
   });
 });

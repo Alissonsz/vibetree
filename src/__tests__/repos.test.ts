@@ -160,6 +160,11 @@ describe("createReposClient", () => {
           return undefined as unknown as T;
         }
 
+        if (command === "get_attention_runtime_capability") {
+          expect(args).toBeUndefined();
+          return { supported: false, reason: "tty session" } as unknown as T;
+        }
+
         if (command === "list_worktree_default_attention_profiles") {
           expect(args).toBeUndefined();
           return { "/tmp/repo": "opencode" } as unknown as T;
@@ -180,6 +185,9 @@ describe("createReposClient", () => {
 
     await repos.setAttentionProfiles(profiles);
 
+    const capability = await repos.getAttentionRuntimeCapability();
+    expect(capability).toEqual({ supported: false, reason: "tty session" });
+
     const worktreeDefaults = await repos.listWorktreeDefaultAttentionProfiles();
     expect(worktreeDefaults).toEqual({ "/tmp/repo": "opencode" });
 
@@ -189,11 +197,11 @@ describe("createReposClient", () => {
     expect(invokeMock).toHaveBeenNthCalledWith(2, "set_attention_profiles", {
       profiles
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(4, "set_worktree_default_attention_profile", {
+    expect(invokeMock).toHaveBeenNthCalledWith(5, "set_worktree_default_attention_profile", {
       worktreePath: "/tmp/repo",
       profileId: "opencode"
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(5, "set_worktree_default_attention_profile", {
+    expect(invokeMock).toHaveBeenNthCalledWith(6, "set_worktree_default_attention_profile", {
       worktreePath: "/tmp/repo",
       profileId: null
     });

@@ -21,6 +21,7 @@ export type ReposClient = {
   listRepoWorktreeBaseDirs: () => Promise<Record<string, string>>;
   setRepoWorktreeBaseDir: (repoId: string, dir: string | null) => Promise<void>;
   getAttentionProfiles: () => Promise<AttentionProfile[]>;
+  getAttentionRuntimeCapability: () => Promise<{ supported: boolean; reason: string | null }>;
   setAttentionProfiles: (profiles: AttentionProfile[]) => Promise<void>;
   listWorktreeDefaultAttentionProfiles: () => Promise<Record<string, string>>;
   setWorktreeDefaultAttentionProfile: (worktreePath: string, profileId: string | null) => Promise<void>;
@@ -51,6 +52,8 @@ export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
       invokeFn<void>("set_repo_worktree_base_dir", { repoId, dir }),
     getAttentionProfiles: () =>
       invokeFn<AttentionProfile[]>("get_attention_profiles"),
+    getAttentionRuntimeCapability: () =>
+      invokeFn<{ supported: boolean; reason: string | null }>("get_attention_runtime_capability"),
     setAttentionProfiles: (profiles) =>
       invokeFn<void>("set_attention_profiles", { profiles }),
     listWorktreeDefaultAttentionProfiles: () =>

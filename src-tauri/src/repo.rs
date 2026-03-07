@@ -44,6 +44,12 @@ pub struct AttentionProfile {
     pub debounce_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttentionRuntimeCapability {
+    pub supported: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct RepoRegistry {
     repos: Vec<RepoInfo>,
@@ -215,6 +221,91 @@ fn canonical_worktree_path_key(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|canonical| canonical.to_string_lossy().to_string())
         .unwrap_or_else(|_| path.to_string())
+}
+
+fn detect_attention_runtime_capability_from_env(
+    is_linux: bool,
+    env: &HashMap<String, String>,
+) -> AttentionRuntimeCapability {
+    if !is_linux {
+        return AttentionRuntimeCapability {
+            supported: true,
+            reason: None,
+        };
+    }
+
+    let session_type = env
+        .get("XDG_SESSION_TYPE")
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let has_display = env
+        .get("DISPLAY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        || env
+            .get("WAYLAND_DISPLAY")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    let is_wsl = env
+        .get("WSL_DISTRO_NAME")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        || env
+            .get("WSL_INTEROP")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
+    if session_type == "tty" {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "Current session is TTY-only, so window attention blinking is unavailable."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if !has_display {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "No graphical display session detected (DISPLAY/WAYLAND_DISPLAY missing)."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if is_wsl {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "WSL sessions often do not expose reliable taskbar/window attention blinking."
+                    .to_string(),
+            ),
+        };
+    }
+
+    AttentionRuntimeCapability {
+        supported: true,
+        reason: None,
+    }
+}
+
+pub fn detect_attention_runtime_capability() -> AttentionRuntimeCapability {
+    let mut env_map = HashMap::new();
+    for key in [
+        "XDG_SESSION_TYPE",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "WSL_DISTRO_NAME",
+        "WSL_INTEROP",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env_map.insert(key.to_string(), value);
+        }
+    }
+
+    detect_attention_runtime_capability_from_env(cfg!(target_os = "linux"), &env_map)
 }
 
 impl RepoRegistry {
@@ -771,6 +862,11 @@ pub fn set_worktree_default_attention_profile(
     registry.persist(&app)
 }
 
+#[tauri::command]
+pub fn get_attention_runtime_capability() -> Result<AttentionRuntimeCapability, String> {
+    Ok(detect_attention_runtime_capability())
+}
+
 fn normalize_string_value(command: Option<String>) -> Option<String> {
     command.and_then(|value| {
         let single_line = value.replace(['\r', '\n'], " ");
@@ -801,9 +897,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        canonical_worktree_path_key, normalize_attention_profiles,
-        normalize_worktree_default_attention_profile_by_path, AttentionProfile, RepoEnvironment,
-        RepoRegistry,
+        canonical_worktree_path_key, detect_attention_runtime_capability_from_env,
+        normalize_attention_profiles, normalize_worktree_default_attention_profile_by_path,
+        AttentionProfile, RepoEnvironment, RepoRegistry,
     };
 
     struct MockRepoEnvironment {
@@ -1070,5 +1166,59 @@ mod tests {
             Some(&"opencode".to_string())
         );
         assert_eq!(normalized.len(), 1);
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_tty_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "tty".to_string()),
+                ("DISPLAY".to_string(), ":0".to_string()),
+            ]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_missing_display_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([("XDG_SESSION_TYPE".to_string(), "wayland".to_string())]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_supported_graphical_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "x11".to_string()),
+                ("DISPLAY".to_string(), ":0".to_string()),
+            ]),
+        );
+
+        assert!(capability.supported);
+        assert_eq!(capability.reason, None);
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_wsl_as_unsupported() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "wayland".to_string()),
+                ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+                ("WSL_DISTRO_NAME".to_string(), "Ubuntu".to_string()),
+            ]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
     }
 }

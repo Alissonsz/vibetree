@@ -13,9 +13,10 @@ use changes::{
 };
 use repo::{
     add_repo, get_global_terminal_startup_command, get_global_worktree_base_dir,
-    get_attention_profiles, get_last_selection, list_repo_terminal_startup_commands,
-    list_repo_worktree_base_dirs, list_repos, list_worktree_default_attention_profiles,
-    load_registry_or_default, remove_repo, set_attention_profiles,
+    get_attention_profiles, get_attention_runtime_capability, get_last_selection,
+    list_repo_terminal_startup_commands, list_repo_worktree_base_dirs, list_repos,
+    list_worktree_default_attention_profiles, load_registry_or_default, remove_repo,
+    set_attention_profiles,
     set_global_terminal_startup_command, set_global_worktree_base_dir, set_last_selection,
     set_repo_terminal_startup_command, set_repo_worktree_base_dir,
     set_worktree_default_attention_profile,
@@ -59,6 +60,7 @@ pub fn run() {
             list_repo_worktree_base_dirs,
             set_repo_worktree_base_dir,
             get_attention_profiles,
+            get_attention_runtime_capability,
             set_attention_profiles,
             list_worktree_default_attention_profiles,
             set_worktree_default_attention_profile,

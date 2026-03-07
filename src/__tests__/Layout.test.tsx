@@ -40,6 +40,10 @@ vi.mock("@tauri-apps/api/core", () => ({
       return [];
     }
 
+    if (command === "get_attention_runtime_capability") {
+      return { supported: true, reason: null };
+    }
+
     if (command === "list_worktree_default_attention_profiles") {
       return {};
     }
@@ -86,6 +90,7 @@ describe("Layout", () => {
         command === "get_global_worktree_base_dir" ||
         command === "list_repo_worktree_base_dirs" ||
         command === "get_attention_profiles" ||
+        command === "get_attention_runtime_capability" ||
         command === "list_worktree_default_attention_profiles"
       ) {
         throw new Error("load failed");

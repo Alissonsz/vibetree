@@ -36,4 +36,9 @@ export type ChangedFile = {
   deletions: number | null;
 };
 
+export type AttentionRuntimeCapability = {
+  supported: boolean;
+  reason: string | null;
+};
+
 export type { AttentionMode, AttentionProfile } from "./terminal/attentionProfiles";

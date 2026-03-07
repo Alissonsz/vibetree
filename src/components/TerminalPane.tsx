@@ -4,7 +4,7 @@ import { X, Plus, SquareTerminal } from "lucide-react";
 import { createTerminalClient } from "../hooks/useTerminal";
 import { useWindowFocus } from "../hooks/useWindowFocus";
 import TerminalInstance from "./TerminalInstance";
-import type { AttentionProfile, WorktreeInfo } from "../types";
+import type { AttentionProfile, AttentionRuntimeCapability, WorktreeInfo } from "../types";
 import { getProfileById } from "../terminal/attentionProfiles";
 import { signalAttention, syncAttentionBadgeCount } from "../terminal/attentionSignals";
 import { Button } from "./ui/Button";
@@ -21,6 +21,7 @@ type TerminalPaneProps = {
   startupCommand: string | null;
   startupConfigReady: boolean;
   attentionProfiles: AttentionProfile[];
+  attentionRuntimeCapability: AttentionRuntimeCapability;
   worktreeDefaultAttentionProfileByPath: Record<string, string>;
   onSetWorktreeDefaultAttentionProfile: (worktreePath: string, profileId: string | null) => Promise<void>;
 };
@@ -42,6 +43,7 @@ export default function TerminalPane({
   startupCommand,
   startupConfigReady,
   attentionProfiles,
+  attentionRuntimeCapability,
   worktreeDefaultAttentionProfileByPath,
   onSetWorktreeDefaultAttentionProfile
 }: TerminalPaneProps) {
@@ -54,6 +56,7 @@ export default function TerminalPane({
   const [sessionProfileOverrideById, setSessionProfileOverrideById] = useState<Record<string, string | "off">>({});
   const [needsAttentionBySessionId, setNeedsAttentionBySessionId] = useState<Record<string, boolean>>({});
   const [startupCommandAtCreateBySessionId, setStartupCommandAtCreateBySessionId] = useState<Record<string, string | null>>({});
+  const [attentionRuntimeWarning, setAttentionRuntimeWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sessionsRef = useRef<SessionsByWorktree>({});
 
@@ -312,6 +315,15 @@ export default function TerminalPane({
         return;
       }
 
+      if (value !== "off" && !attentionRuntimeCapability.supported) {
+        setAttentionRuntimeWarning(
+          attentionRuntimeCapability.reason ??
+            "This runtime session may not support window attention blinking."
+        );
+      } else {
+        setAttentionRuntimeWarning(null);
+      }
+
       const normalized = value === "off" ? "off" : value;
       setSessionProfileOverrideById((prev) => ({
         ...prev,
@@ -323,7 +335,7 @@ export default function TerminalPane({
         value === "off" ? null : value
       );
     },
-    [activeSessionId, onSetWorktreeDefaultAttentionProfile, selectedWorktreePath]
+    [activeSessionId, attentionRuntimeCapability, onSetWorktreeDefaultAttentionProfile, selectedWorktreePath]
   );
 
   return (
@@ -352,7 +364,8 @@ export default function TerminalPane({
         </div>
 
         {selectedWorktreePath && worktreeSessions.length > 0 ? (
-          <div className="flex items-center border-b border-surface0 bg-mantle" role="tablist">
+          <div className="border-b border-surface0 bg-mantle" role="tablist">
+            <div className="flex items-center">
             <div className="flex min-w-0 flex-1">
               {worktreeSessions.map((session) => {
                 const isActive = session.sessionId === activeSessionId;
@@ -427,6 +440,14 @@ export default function TerminalPane({
                 disabled={!activeSessionId}
               />
             </div>
+          </div>
+            {attentionRuntimeWarning ? (
+              <div className="px-3 pb-2">
+                <Card variant="warning" className="text-xs" data-testid="attention-runtime-warning">
+                  {attentionRuntimeWarning}
+                </Card>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

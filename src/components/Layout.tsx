@@ -11,7 +11,7 @@ import ChangesPane from "./ChangesPane";
 import { useAppState } from "../hooks/useAppState";
 import { createReposClient } from "../hooks/useRepos";
 import { DEFAULT_ATTENTION_PROFILES, normalizeAttentionProfiles } from "../terminal/attentionProfiles";
-import type { AttentionProfile } from "../types";
+import type { AttentionProfile, AttentionRuntimeCapability } from "../types";
 import RepoPane from "./RepoPane";
 import TerminalPane from "./TerminalPane";
 
@@ -55,6 +55,7 @@ export default function Layout() {
   const [globalTerminalStartupCommand, setGlobalTerminalStartupCommand] = useState<string | null>(null);
   const [repoTerminalStartupByRepoId, setRepoTerminalStartupByRepoId] = useState<Record<string, string>>({});
   const [attentionProfiles, setAttentionProfiles] = useState<AttentionProfile[]>(DEFAULT_ATTENTION_PROFILES);
+  const [attentionRuntimeCapability, setAttentionRuntimeCapability] = useState<AttentionRuntimeCapability>({ supported: true, reason: null });
   const [worktreeDefaultAttentionProfileByPath, setWorktreeDefaultAttentionProfileByPath] = useState<Record<string, string>>({});
   
   const [globalWorktreeBaseDir, setGlobalWorktreeBaseDir] = useState<string | null>(null);
@@ -88,6 +89,7 @@ export default function Layout() {
           globalBaseDir,
           repoBaseDirs,
           loadedAttentionProfiles,
+          runtimeCapability,
           loadedWorktreeDefaults
         ] = await Promise.all([
           reposClient.getGlobalTerminalStartupCommand(),
@@ -95,6 +97,7 @@ export default function Layout() {
           reposClient.getGlobalWorktreeBaseDir(),
           reposClient.listRepoWorktreeBaseDirs(),
           reposClient.getAttentionProfiles(),
+          reposClient.getAttentionRuntimeCapability(),
           reposClient.listWorktreeDefaultAttentionProfiles()
         ]);
 
@@ -120,12 +123,14 @@ export default function Layout() {
           setAttentionProfiles(
             normalizeAttentionProfiles(loadedAttentionProfiles, DEFAULT_ATTENTION_PROFILES)
           );
+          setAttentionRuntimeCapability(runtimeCapability);
           setWorktreeDefaultAttentionProfileByPath(loadedWorktreeDefaults);
         }
         setStartupConfigError(null);
       } catch {
         if (active) {
           setAttentionProfiles(DEFAULT_ATTENTION_PROFILES);
+          setAttentionRuntimeCapability({ supported: true, reason: null });
           setWorktreeDefaultAttentionProfileByPath({});
           setStartupConfigError(
             "Unable to load configuration. Using defaults until settings are saved again."
@@ -351,6 +356,7 @@ export default function Layout() {
           startupCommand={resolvedStartupCommand}
           startupConfigReady={startupConfigLoaded}
           attentionProfiles={attentionProfiles}
+          attentionRuntimeCapability={attentionRuntimeCapability}
           worktreeDefaultAttentionProfileByPath={worktreeDefaultAttentionProfileByPath}
           onSetWorktreeDefaultAttentionProfile={async (worktreePath: string, profileId: string | null) => {
             startupConfigMutatedRef.current = true;
