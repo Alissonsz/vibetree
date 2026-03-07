@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 export type TerminalOutputEvent = {
   session_id: string;
+  worktree_path: string;
   data: string;
 };
 

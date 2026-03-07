@@ -3,14 +3,16 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { createTerminalClient, useTerminalOutput } from "../hooks/useTerminal";
+import { emit } from "@tauri-apps/api/event";
 
 type TerminalInstanceProps = {
   sessionId: string;
   isActive: boolean;
   onTitleChange?: (title: string) => void;
+  worktreePath?: string;
 };
 
-export default function TerminalInstance({ sessionId, isActive, onTitleChange }: TerminalInstanceProps) {
+export default function TerminalInstance({ sessionId, isActive, onTitleChange, worktreePath }: TerminalInstanceProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -107,6 +109,24 @@ export default function TerminalInstance({ sessionId, isActive, onTitleChange }:
         onTitleChangeRef.current?.(title);
       });
 
+      // Custom OSC 99 handler: \x1b]99;agent-finished\x07 (or \x1b\)
+      term.parser.registerOscHandler(99, (data) => {
+        if (data === "agent-finished" || data === "agent-waiting") {
+          if (worktreePath) {
+            void emit("agent-finished", { session_id: sessionId, worktree_path: worktreePath });
+          }
+          return true;
+        }
+        return false;
+      });
+
+      // Also listen to the standard terminal bell
+      term.onBell(() => {
+        if (worktreePath) {
+          void emit("agent-finished", { session_id: sessionId, worktree_path: worktreePath });
+        }
+      });
+
       handleResize = () => {
         if (fitAddonRef.current) {
           fitAddonRef.current.fit();
@@ -132,7 +152,7 @@ export default function TerminalInstance({ sessionId, isActive, onTitleChange }:
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, worktreePath]);
 
   useEffect(() => {
     if (isActive && fitAddonRef.current) {

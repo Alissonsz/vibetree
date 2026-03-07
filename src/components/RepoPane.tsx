@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, X, Settings2, FolderRoot, GitBranch, Trash, Loader2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { useWorktreeChanges, removeWorktree } from "../hooks/useWorktrees";
 import { getChangedFiles } from "../hooks/useChanges";
 import type { RepoInfo, WorktreeInfo, ChangedFile } from "../types";
@@ -237,6 +239,28 @@ export default function RepoPane({
         }));
       });
   }
+
+  const handleRequestNotificationPermission = async () => {
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === "granted";
+    }
+    if (permissionGranted) {
+      sendNotification({
+        title: "Test Notification",
+        body: "vibetree notifications are now enabled!"
+      });
+      // Fallback
+      void invoke("send_system_notification", {
+        title: "Test Notification",
+        body: "vibetree notifications are now enabled!"
+      });
+      alert("Notification permission granted! A test notification has been sent.");
+    } else {
+      alert("Permission denied. You may need to enable notifications for vibetree in System Settings > Notifications.");
+    }
+  };
 
   return (
     <aside
@@ -600,19 +624,30 @@ export default function RepoPane({
 
                           <div className="my-1 h-px bg-surface0" />
 
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            className="w-full justify-start px-2 py-1.5 text-xs bg-transparent border-none"
-                            data-testid="remove-repo-btn"
-                            onClick={() => {
-                              setConfigRepoId(null);
-                              void handleRemoveRepo(repo.id);
-                            }}
-                            aria-label={`Remove ${repo.name}`}
-                          >
-                            Remove workspace
-                          </Button>
+                          <div className="space-y-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="w-full justify-start px-2 py-1.5 text-xs bg-transparent border-none text-blue hover:bg-blue/10"
+                              onClick={() => void handleRequestNotificationPermission()}
+                            >
+                              Request Desktop Notifications
+                            </Button>
+
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              className="w-full justify-start px-2 py-1.5 text-xs bg-transparent border-none"
+                              data-testid="remove-repo-btn"
+                              onClick={() => {
+                                setConfigRepoId(null);
+                                void handleRemoveRepo(repo.id);
+                              }}
+                              aria-label={`Remove ${repo.name}`}
+                            >
+                              Remove workspace
+                            </Button>
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -667,26 +702,34 @@ export default function RepoPane({
                                     </span>
                                   </div>
                                 </div>
-                                <div className={`shrink-0 flex items-center transition-opacity ${removingWorktrees.has(worktree.path) ? "opacity-100" : "opacity-0 group-hover/wt:opacity-100"}`}>
-                                  {removingWorktrees.has(worktree.path) ? (
-                                    <div className="h-6 w-6 flex items-center justify-center text-subtext1">
-                                      <Loader2 size={12} className="animate-spin" />
-                                    </div>
-                                  ) : (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6 hover:text-red hover:bg-red/10"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        void handleRemoveWorktree(repo.path, worktree.path);
-                                      }}
-                                      aria-label="Remove worktree"
-                                      title="Remove worktree"
-                                    >
-                                      <Trash size={12} />
-                                    </Button>
+                                <div className="shrink-0 flex items-center gap-2">
+                                  {worktree.is_waiting_for_user && (
+                                    <span className="relative flex h-2 w-2" title="Waiting for user input">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-blue"></span>
+                                    </span>
                                   )}
+                                  <div className={`transition-opacity ${removingWorktrees.has(worktree.path) ? "opacity-100" : "opacity-0 group-hover/wt:opacity-100"}`}>
+                                    {removingWorktrees.has(worktree.path) ? (
+                                      <div className="h-6 w-6 flex items-center justify-center text-subtext1">
+                                        <Loader2 size={12} className="animate-spin" />
+                                      </div>
+                                    ) : (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 hover:text-red hover:bg-red/10"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleRemoveWorktree(repo.path, worktree.path);
+                                        }}
+                                        aria-label="Remove worktree"
+                                        title="Remove worktree"
+                                      >
+                                        <Trash size={12} />
+                                      </Button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </button>

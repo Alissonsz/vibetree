@@ -16,11 +16,13 @@ type TerminalPaneProps = {
   selectedWorktree: WorktreeInfo | null;
   startupCommand: string | null;
   startupConfigReady: boolean;
+  onSetActiveSession: (worktreePath: string, sessionId: string) => void;
 };
 
 type SessionState = {
   sessionId: string;
   initialTitle: string;
+  worktreePath: string;
 };
 
 type SessionsByWorktree = Record<string, SessionState[]>;
@@ -33,7 +35,8 @@ export default function TerminalPane({
   selectedWorktreePath,
   selectedWorktree,
   startupCommand,
-  startupConfigReady
+  startupConfigReady,
+  onSetActiveSession
 }: TerminalPaneProps) {
   const terminalClient = useMemo(() => createTerminalClient(), []);
   const [sessionsByWorktree, setSessionsByWorktree] = useState<SessionsByWorktree>({});
@@ -45,6 +48,16 @@ export default function TerminalPane({
   useEffect(() => {
     sessionsRef.current = sessionsByWorktree;
   }, [sessionsByWorktree]);
+
+  // Sync initial and switched active sessions to the app state
+  useEffect(() => {
+    if (selectedWorktreePath) {
+      const activeId = activeSessionIdByWorktree[selectedWorktreePath];
+      if (activeId) {
+        onSetActiveSession(selectedWorktreePath, activeId);
+      }
+    }
+  }, [selectedWorktreePath, activeSessionIdByWorktree, onSetActiveSession]);
 
   const createSession = useCallback(
     async (worktreePath: string, branchName?: string) => {
@@ -60,18 +73,20 @@ export default function TerminalPane({
           const existing = prev[worktreePath] || [];
           return {
             ...prev,
-            [worktreePath]: [...existing, { sessionId, initialTitle }]
+            [worktreePath]: [...existing, { sessionId, initialTitle, worktreePath }]
           };
         });
         setActiveSessionIdByWorktree((prev) => ({
           ...prev,
           [worktreePath]: sessionId
         }));
+        // Notify app state immediately about the new active session
+        onSetActiveSession(worktreePath, sessionId);
       } catch {
         setError("Unable to start terminal session.");
       }
     },
-    [startupCommand, terminalClient]
+    [startupCommand, terminalClient, onSetActiveSession]
   );
 
   useEffect(() => {
@@ -258,6 +273,7 @@ export default function TerminalPane({
               sessionId={session.sessionId} 
               isActive={session.sessionId === activeSessionId}
               onTitleChange={(title) => handleTitleChange(session.sessionId, title)}
+              worktreePath={session.worktreePath}
             />
           ))}
         </div>

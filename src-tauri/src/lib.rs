@@ -27,10 +27,38 @@ use worktree::{
     start_watching_repo, stop_watching_repo, WorktreeService,
 };
 
+#[tauri::command]
+fn send_system_notification(app: tauri::AppHandle, title: String, body: String) {
+    use tauri_plugin_notification::NotificationExt;
+    
+    // 1. Try the official Tauri/Native plugin
+    let _ = app.notification()
+        .builder()
+        .title(&title)
+        .body(&body)
+        .show();
+
+    // 2. macOS Nuclear Fallback: Use AppleScript to force a notification
+    // This bypasses permission issues for unsigned dev binaries.
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            body.replace('"', "\\\""),
+            title.replace('"', "\\\"")
+        );
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
@@ -71,7 +99,8 @@ pub fn run() {
             add_worktree,
             remove_worktree,
             list_branches,
-            get_current_branch
+            get_current_branch,
+            send_system_notification
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, State};
 #[derive(Clone, Serialize)]
 pub struct TerminalOutputEvent {
     pub session_id: String,
+    pub worktree_path: String,
     pub data: String,
 }
 
@@ -64,6 +65,12 @@ fn write_startup_command(
     writer
         .flush()
         .map_err(|error| format!("failed to flush startup command: {error}"))
+}
+
+#[derive(Clone, Serialize)]
+pub struct AgentFinishedEvent {
+    pub session_id: String,
+    pub worktree_path: String,
 }
 
 impl TerminalManager {
@@ -130,7 +137,12 @@ impl TerminalManager {
         let killer = Arc::new(Mutex::new(killer));
         let master = Arc::new(Mutex::new(pair.master));
 
-        self.spawn_output_thread(session_id.clone(), Arc::clone(&reader), app.clone());
+        self.spawn_output_thread(
+            session_id.clone(),
+            worktree_path.clone(),
+            Arc::clone(&reader),
+            app.clone(),
+        );
         self.spawn_exit_thread(session_id.clone(), child, app);
 
         let session = TerminalSession {
@@ -218,6 +230,7 @@ impl TerminalManager {
     fn spawn_output_thread(
         &self,
         session_id: String,
+        worktree_path: String,
         reader: Arc<Mutex<Box<dyn Read + Send>>>,
         app: Option<AppHandle>,
     ) {
@@ -246,9 +259,27 @@ impl TerminalManager {
                 }
 
                 if let Some(app_handle) = &app {
+                    let data = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+                    let lower_data = data.to_lowercase();
+
+                    // Check for agent finish patterns (OSC 99, OSC 9, or literal message)
+                    // We check lowercase for the literal message to be more robust
+                    if data.contains("\x1b]99;agent-finished")
+                        || data.contains("\x1b]9;Finish")
+                        || lower_data.contains("agent finished")
+                        || lower_data.contains("task completed")
+                    {
+                        let payload = AgentFinishedEvent {
+                            session_id: session_id.clone(),
+                            worktree_path: worktree_path.clone(),
+                        };
+                        let _ = app_handle.emit("agent-finished", payload);
+                    }
+
                     let payload = TerminalOutputEvent {
                         session_id: session_id.clone(),
-                        data: String::from_utf8_lossy(&buffer[..bytes_read]).to_string(),
+                        worktree_path: worktree_path.clone(),
+                        data,
                     };
                     let _ = app_handle.emit("terminal-output", payload);
                 }

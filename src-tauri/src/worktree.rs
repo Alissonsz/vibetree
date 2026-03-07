@@ -20,6 +20,7 @@ pub struct WorktreeInfo {
     pub head: String,
     pub branch: Option<String>,
     pub is_bare: bool,
+    pub is_waiting_for_user: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,6 +286,7 @@ pub fn parse_worktree_list(output: &str) -> Result<Vec<WorktreeInfo>, String> {
                 head: std::mem::take(head),
                 branch: branch.take(),
                 is_bare: *is_bare,
+                is_waiting_for_user: false,
             });
             *is_bare = false;
         }
