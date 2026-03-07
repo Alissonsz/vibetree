@@ -1,4 +1,4 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,12 +16,38 @@ const STORE_GLOBAL_TERMINAL_STARTUP_COMMAND_KEY: &str = "global_terminal_startup
 const STORE_REPO_TERMINAL_STARTUP_COMMANDS_KEY: &str = "repo_terminal_startup_commands";
 const STORE_GLOBAL_WORKTREE_BASE_DIR_KEY: &str = "global_worktree_base_dir";
 const STORE_REPO_WORKTREE_BASE_DIRS_KEY: &str = "repo_worktree_base_dirs";
+const STORE_ATTENTION_PROFILES_KEY: &str = "attention_profiles";
+const STORE_WORKTREE_DEFAULT_ATTENTION_PROFILE_BY_PATH_KEY: &str =
+    "worktree_default_attention_profile_by_path";
+
+const ATTENTION_PROFILE_OPENCODE_ID: &str = "opencode";
+const ATTENTION_PROFILE_CLAUDE_ID: &str = "claude";
+const ATTENTION_PROFILE_CODEX_ID: &str = "codex";
+const ATTENTION_PROFILE_GEMINI_ID: &str = "gemini";
+const ATTENTION_PROFILE_CUSTOM_ID: &str = "custom";
+const CLI_PROMPT_REGEX_DEFAULT: &str = "(>|›|❯)\\s*$";
+const LEGACY_CLI_PROMPT_REGEX_DEFAULT: &str = "(^|\\r?\\n)(>|›|❯)\\s*$";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoInfo {
     pub id: String,
     pub path: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttentionProfile {
+    pub id: String,
+    pub name: String,
+    pub prompt_regex: Option<String>,
+    pub attention_mode: String,
+    pub debounce_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttentionRuntimeCapability {
+    pub supported: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -32,6 +58,8 @@ pub struct RepoRegistry {
     repo_terminal_startup_commands: HashMap<String, String>,
     global_worktree_base_dir: Option<String>,
     repo_worktree_base_dirs: HashMap<String, String>,
+    attention_profiles: Vec<AttentionProfile>,
+    worktree_default_attention_profile_by_path: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +70,8 @@ struct RepoRegistryStore {
     repo_terminal_startup_commands: HashMap<String, String>,
     global_worktree_base_dir: Option<String>,
     repo_worktree_base_dirs: HashMap<String, String>,
+    attention_profiles: Vec<AttentionProfile>,
+    worktree_default_attention_profile_by_path: HashMap<String, String>,
 }
 
 trait RepoEnvironment {
@@ -74,6 +104,208 @@ impl RepoEnvironment for SystemRepoEnvironment {
             .map_err(|error| format!("invalid git command output: {error}"))?;
         Ok(stdout.trim() == "true")
     }
+}
+
+fn default_attention_profiles() -> Vec<AttentionProfile> {
+    vec![
+        AttentionProfile {
+            id: ATTENTION_PROFILE_OPENCODE_ID.to_string(),
+            name: "OpenCode".to_string(),
+            prompt_regex: Some("(^|\\r?\\n)>\\s*$".to_string()),
+            attention_mode: "attention".to_string(),
+            debounce_ms: 300,
+        },
+        AttentionProfile {
+            id: ATTENTION_PROFILE_CLAUDE_ID.to_string(),
+            name: "Claude Code".to_string(),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
+            attention_mode: "attention".to_string(),
+            debounce_ms: 300,
+        },
+        AttentionProfile {
+            id: ATTENTION_PROFILE_CODEX_ID.to_string(),
+            name: "Codex".to_string(),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
+            attention_mode: "attention".to_string(),
+            debounce_ms: 300,
+        },
+        AttentionProfile {
+            id: ATTENTION_PROFILE_GEMINI_ID.to_string(),
+            name: "Gemini CLI".to_string(),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
+            attention_mode: "attention".to_string(),
+            debounce_ms: 300,
+        },
+        AttentionProfile {
+            id: ATTENTION_PROFILE_CUSTOM_ID.to_string(),
+            name: "Custom".to_string(),
+            prompt_regex: None,
+            attention_mode: "attention".to_string(),
+            debounce_ms: 300,
+        },
+    ]
+}
+
+fn known_attention_profile_ids() -> HashSet<String> {
+    default_attention_profiles()
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect()
+}
+
+fn sanitize_attention_mode(mode: String) -> String {
+    match mode.as_str() {
+        "off" | "attention" | "attention+notification" => mode,
+        _ => "attention".to_string(),
+    }
+}
+
+fn sanitize_debounce_ms(value: u64) -> u64 {
+    if (50..=2000).contains(&value) {
+        value
+    } else {
+        300
+    }
+}
+
+fn normalize_attention_profiles(loaded: Vec<AttentionProfile>) -> Vec<AttentionProfile> {
+    let defaults = default_attention_profiles();
+    let loaded_by_id: HashMap<String, AttentionProfile> = loaded
+        .into_iter()
+        .map(|profile| (profile.id.clone(), profile))
+        .collect();
+
+    defaults
+        .into_iter()
+        .map(|default_profile| {
+            if let Some(candidate) = loaded_by_id.get(&default_profile.id) {
+                let name = candidate.name.trim();
+                let prompt_regex = match candidate.prompt_regex.clone() {
+                    Some(regex) if regex == LEGACY_CLI_PROMPT_REGEX_DEFAULT => {
+                        default_profile.prompt_regex.clone()
+                    }
+                    Some(regex) => Some(regex),
+                    None => default_profile.prompt_regex.clone(),
+                };
+                AttentionProfile {
+                    id: default_profile.id,
+                    name: if name.is_empty() {
+                        default_profile.name
+                    } else {
+                        name.to_string()
+                    },
+                    prompt_regex,
+                    attention_mode: sanitize_attention_mode(candidate.attention_mode.clone()),
+                    debounce_ms: sanitize_debounce_ms(candidate.debounce_ms),
+                }
+            } else {
+                default_profile
+            }
+        })
+        .collect()
+}
+
+fn normalize_worktree_default_attention_profile_by_path(
+    loaded: HashMap<String, String>,
+    valid_profile_ids: &HashSet<String>,
+) -> HashMap<String, String> {
+    loaded
+        .into_iter()
+        .filter(|(path, profile_id)| {
+            Path::new(path).exists() && valid_profile_ids.contains(profile_id)
+        })
+        .collect()
+}
+
+fn canonical_worktree_path_key(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .map(|canonical| canonical.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string())
+}
+
+fn detect_attention_runtime_capability_from_env(
+    is_linux: bool,
+    env: &HashMap<String, String>,
+) -> AttentionRuntimeCapability {
+    if !is_linux {
+        return AttentionRuntimeCapability {
+            supported: true,
+            reason: None,
+        };
+    }
+
+    let session_type = env
+        .get("XDG_SESSION_TYPE")
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let has_display = env
+        .get("DISPLAY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        || env
+            .get("WAYLAND_DISPLAY")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    let is_wsl = env
+        .get("WSL_DISTRO_NAME")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        || env
+            .get("WSL_INTEROP")
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
+    if session_type == "tty" {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "Current session is TTY-only, so window attention blinking is unavailable."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if !has_display {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "No graphical display session detected (DISPLAY/WAYLAND_DISPLAY missing)."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if is_wsl {
+        return AttentionRuntimeCapability {
+            supported: false,
+            reason: Some(
+                "WSL sessions often do not expose reliable taskbar/window attention blinking."
+                    .to_string(),
+            ),
+        };
+    }
+
+    AttentionRuntimeCapability {
+        supported: true,
+        reason: None,
+    }
+}
+
+pub fn detect_attention_runtime_capability() -> AttentionRuntimeCapability {
+    let mut env_map = HashMap::new();
+    for key in [
+        "XDG_SESSION_TYPE",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "WSL_DISTRO_NAME",
+        "WSL_INTEROP",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env_map.insert(key.to_string(), value);
+        }
+    }
+
+    detect_attention_runtime_capability_from_env(cfg!(target_os = "linux"), &env_map)
 }
 
 impl RepoRegistry {
@@ -125,6 +357,22 @@ impl RepoRegistry {
             .map_err(|error| format!("failed to parse repo worktree base dirs: {error}"))?
             .unwrap_or_default();
 
+        let attention_profiles: Vec<AttentionProfile> = store
+            .get(STORE_ATTENTION_PROFILES_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to parse attention profiles: {error}"))?
+            .unwrap_or_default();
+
+        let worktree_default_attention_profile_by_path: HashMap<String, String> = store
+            .get(STORE_WORKTREE_DEFAULT_ATTENTION_PROFILE_BY_PATH_KEY)
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| {
+                format!("failed to parse worktree default attention profiles by path: {error}")
+            })?
+            .unwrap_or_default();
+
         let global_terminal_startup_command =
             normalize_string_value(global_terminal_startup_command);
         let repo_terminal_startup_commands: HashMap<String, String> =
@@ -134,7 +382,7 @@ impl RepoRegistry {
                     normalize_string_value(Some(command)).map(|normalized| (repo_id, normalized))
                 })
                 .collect();
-                
+
         let global_worktree_base_dir = normalize_string_value(global_worktree_base_dir);
         let repo_worktree_base_dirs: HashMap<String, String> = repo_worktree_base_dirs
             .into_iter()
@@ -142,6 +390,16 @@ impl RepoRegistry {
                 normalize_string_value(Some(dir)).map(|normalized| (repo_id, normalized))
             })
             .collect();
+        let attention_profiles = normalize_attention_profiles(attention_profiles);
+        let valid_profile_ids: HashSet<String> = attention_profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect();
+        let worktree_default_attention_profile_by_path =
+            normalize_worktree_default_attention_profile_by_path(
+                worktree_default_attention_profile_by_path,
+                &valid_profile_ids,
+            );
 
         Ok(Self {
             repos,
@@ -150,6 +408,8 @@ impl RepoRegistry {
             repo_terminal_startup_commands,
             global_worktree_base_dir,
             repo_worktree_base_dirs,
+            attention_profiles,
+            worktree_default_attention_profile_by_path,
         })
     }
 
@@ -266,6 +526,59 @@ impl RepoRegistry {
         Ok(())
     }
 
+    pub fn get_attention_profiles(&self) -> Vec<AttentionProfile> {
+        self.attention_profiles.clone()
+    }
+
+    pub fn set_attention_profiles(&mut self, profiles: Vec<AttentionProfile>) {
+        self.attention_profiles = normalize_attention_profiles(profiles);
+
+        let valid_profile_ids: HashSet<String> = self
+            .attention_profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect();
+
+        self.worktree_default_attention_profile_by_path =
+            normalize_worktree_default_attention_profile_by_path(
+                self.worktree_default_attention_profile_by_path.clone(),
+                &valid_profile_ids,
+            );
+    }
+
+    pub fn list_worktree_default_attention_profiles(&self) -> HashMap<String, String> {
+        self.worktree_default_attention_profile_by_path.clone()
+    }
+
+    pub fn set_worktree_default_attention_profile(
+        &mut self,
+        worktree_path: &str,
+        profile_id: Option<String>,
+    ) -> Result<(), String> {
+        let canonical_path = canonical_worktree_path_key(worktree_path);
+        let valid_profile_ids = known_attention_profile_ids();
+
+        match profile_id {
+            Some(id) => {
+                if !valid_profile_ids.contains(&id) {
+                    return Err(format!("unknown attention profile id '{id}'"));
+                }
+                self.worktree_default_attention_profile_by_path
+                    .remove(worktree_path);
+                self.worktree_default_attention_profile_by_path
+                    .insert(canonical_path, id);
+            }
+            None => {
+                self.worktree_default_attention_profile_by_path
+                    .remove(worktree_path);
+                self.worktree_default_attention_profile_by_path
+                    .remove(&canonical_path);
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn persist<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), String> {
         let store = app
             .store_builder(STORE_FILE)
@@ -279,6 +592,10 @@ impl RepoRegistry {
             repo_terminal_startup_commands: self.repo_terminal_startup_commands.clone(),
             global_worktree_base_dir: self.global_worktree_base_dir.clone(),
             repo_worktree_base_dirs: self.repo_worktree_base_dirs.clone(),
+            attention_profiles: self.attention_profiles.clone(),
+            worktree_default_attention_profile_by_path: self
+                .worktree_default_attention_profile_by_path
+                .clone(),
         };
 
         store.set(
@@ -311,9 +628,23 @@ impl RepoRegistry {
         );
         store.set(
             STORE_REPO_WORKTREE_BASE_DIRS_KEY,
-            serde_json::to_value(payload.repo_worktree_base_dirs).map_err(|error| {
-                format!("failed to serialize repo worktree base dirs: {error}")
-            })?,
+            serde_json::to_value(payload.repo_worktree_base_dirs)
+                .map_err(|error| format!("failed to serialize repo worktree base dirs: {error}"))?,
+        );
+        store.set(
+            STORE_ATTENTION_PROFILES_KEY,
+            serde_json::to_value(payload.attention_profiles)
+                .map_err(|error| format!("failed to serialize attention profiles: {error}"))?,
+        );
+        store.set(
+            STORE_WORKTREE_DEFAULT_ATTENTION_PROFILE_BY_PATH_KEY,
+            serde_json::to_value(payload.worktree_default_attention_profile_by_path).map_err(
+                |error| {
+                    format!(
+                        "failed to serialize worktree default attention profiles by path: {error}"
+                    )
+                },
+            )?,
         );
         store
             .save()
@@ -492,6 +823,50 @@ pub fn set_repo_worktree_base_dir(
     registry.persist(&app)
 }
 
+#[tauri::command]
+pub fn get_attention_profiles(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<Vec<AttentionProfile>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.get_attention_profiles())
+}
+
+#[tauri::command]
+pub fn set_attention_profiles(
+    profiles: Vec<AttentionProfile>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_attention_profiles(profiles);
+    registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn list_worktree_default_attention_profiles(
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<HashMap<String, String>, String> {
+    let registry = lock_registry(&state)?;
+    Ok(registry.list_worktree_default_attention_profiles())
+}
+
+#[tauri::command]
+pub fn set_worktree_default_attention_profile(
+    worktree_path: String,
+    profile_id: Option<String>,
+    app: AppHandle,
+    state: State<'_, Mutex<RepoRegistry>>,
+) -> Result<(), String> {
+    let mut registry = lock_registry(&state)?;
+    registry.set_worktree_default_attention_profile(&worktree_path, profile_id)?;
+    registry.persist(&app)
+}
+
+#[tauri::command]
+pub fn get_attention_runtime_capability() -> Result<AttentionRuntimeCapability, String> {
+    Ok(detect_attention_runtime_capability())
+}
+
 fn normalize_string_value(command: Option<String>) -> Option<String> {
     command.and_then(|value| {
         let single_line = value.replace(['\r', '\n'], " ");
@@ -521,7 +896,11 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    use super::{RepoEnvironment, RepoRegistry};
+    use super::{
+        canonical_worktree_path_key, detect_attention_runtime_capability_from_env,
+        normalize_attention_profiles, normalize_worktree_default_attention_profile_by_path,
+        AttentionProfile, RepoEnvironment, RepoRegistry,
+    };
 
     struct MockRepoEnvironment {
         canonical_paths: HashMap<String, PathBuf>,
@@ -677,5 +1056,169 @@ mod tests {
         assert_eq!(repos.len(), 2);
         assert_eq!(repos[0].id, first.id);
         assert_eq!(repos[1].id, second.id);
+    }
+
+    #[test]
+    fn attention_profiles_seed_defaults_when_missing() {
+        let profiles = normalize_attention_profiles(vec![]);
+        assert_eq!(profiles.len(), 5);
+        assert_eq!(profiles[0].id, "opencode");
+        assert_eq!(
+            profiles[0].prompt_regex,
+            Some("(^|\\r?\\n)>\\s*$".to_string())
+        );
+    }
+
+    #[test]
+    fn attention_profiles_sanitize_mode_and_debounce() {
+        let profiles = normalize_attention_profiles(vec![AttentionProfile {
+            id: "opencode".to_string(),
+            name: "  ".to_string(),
+            prompt_regex: Some("(^|\\r?\\n)>\\s*$".to_string()),
+            attention_mode: "invalid".to_string(),
+            debounce_ms: 5,
+        }]);
+
+        let opencode = profiles
+            .into_iter()
+            .find(|profile| profile.id == "opencode")
+            .expect("opencode should exist");
+
+        assert_eq!(opencode.name, "OpenCode");
+        assert_eq!(opencode.attention_mode, "attention");
+        assert_eq!(opencode.debounce_ms, 300);
+    }
+
+    #[test]
+    fn attention_profiles_restore_builtin_regex_when_saved_as_null() {
+        let profiles = normalize_attention_profiles(vec![AttentionProfile {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            prompt_regex: None,
+            attention_mode: "attention+notification".to_string(),
+            debounce_ms: 300,
+        }]);
+
+        let codex = profiles
+            .into_iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex should exist");
+
+        assert_eq!(codex.prompt_regex, Some("(>|›|❯)\\s*$".to_string()));
+    }
+
+    #[test]
+    fn attention_profiles_migrate_legacy_strict_cli_regex() {
+        let profiles = normalize_attention_profiles(vec![AttentionProfile {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            prompt_regex: Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string()),
+            attention_mode: "attention+notification".to_string(),
+            debounce_ms: 300,
+        }]);
+
+        let codex = profiles
+            .into_iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex should exist");
+
+        assert_eq!(codex.prompt_regex, Some("(>|›|❯)\\s*$".to_string()));
+    }
+
+    #[test]
+    fn set_worktree_default_attention_profile_uses_canonical_fallback() {
+        let mut registry = RepoRegistry::default();
+        let path = "/this/path/does/not/exist";
+
+        let result =
+            registry.set_worktree_default_attention_profile(path, Some("opencode".to_string()));
+        assert!(result.is_ok());
+
+        let mapping = registry.list_worktree_default_attention_profiles();
+        assert_eq!(mapping.get(path), Some(&"opencode".to_string()));
+
+        let canonical = canonical_worktree_path_key(path);
+        assert_eq!(canonical, path);
+    }
+
+    #[test]
+    fn normalize_worktree_defaults_drops_stale_or_unknown_entries() {
+        let temp_dir = std::env::temp_dir().join("vibetree-attention-profile-test");
+        std::fs::create_dir_all(&temp_dir).expect("failed to create temp dir");
+
+        let existing_path = temp_dir.to_string_lossy().to_string();
+        let missing_path = "/tmp/vibetree-missing-attention-path".to_string();
+        let valid_ids = ["opencode".to_string(), "claude".to_string()]
+            .into_iter()
+            .collect();
+
+        let normalized = normalize_worktree_default_attention_profile_by_path(
+            HashMap::from([
+                (existing_path.clone(), "opencode".to_string()),
+                (existing_path.clone() + "-unknown", "invalid".to_string()),
+                (missing_path, "opencode".to_string()),
+            ]),
+            &valid_ids,
+        );
+
+        assert_eq!(
+            normalized.get(&existing_path),
+            Some(&"opencode".to_string())
+        );
+        assert_eq!(normalized.len(), 1);
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_tty_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "tty".to_string()),
+                ("DISPLAY".to_string(), ":0".to_string()),
+            ]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_missing_display_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([("XDG_SESSION_TYPE".to_string(), "wayland".to_string())]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_supported_graphical_session() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "x11".to_string()),
+                ("DISPLAY".to_string(), ":0".to_string()),
+            ]),
+        );
+
+        assert!(capability.supported);
+        assert_eq!(capability.reason, None);
+    }
+
+    #[test]
+    fn attention_runtime_capability_detects_wsl_as_unsupported() {
+        let capability = detect_attention_runtime_capability_from_env(
+            true,
+            &HashMap::from([
+                ("XDG_SESSION_TYPE".to_string(), "wayland".to_string()),
+                ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+                ("WSL_DISTRO_NAME".to_string(), "Ubuntu".to_string()),
+            ]),
+        );
+
+        assert!(!capability.supported);
+        assert!(capability.reason.is_some());
     }
 }

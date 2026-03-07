@@ -2,10 +2,14 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { X, Plus, SquareTerminal } from "lucide-react";
 
 import { createTerminalClient } from "../hooks/useTerminal";
+import { useWindowFocus } from "../hooks/useWindowFocus";
 import TerminalInstance from "./TerminalInstance";
-import type { WorktreeInfo } from "../types";
+import type { AttentionProfile, AttentionRuntimeCapability, WorktreeInfo } from "../types";
+import { getProfileById } from "../terminal/attentionProfiles";
+import { signalAttention, syncAttentionBadgeCount } from "../terminal/attentionSignals";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
+import { Select } from "./ui/Select";
 
 type TerminalPaneProps = {
   repoOpen: boolean;
@@ -16,6 +20,10 @@ type TerminalPaneProps = {
   selectedWorktree: WorktreeInfo | null;
   startupCommand: string | null;
   startupConfigReady: boolean;
+  attentionProfiles: AttentionProfile[];
+  attentionRuntimeCapability: AttentionRuntimeCapability;
+  worktreeDefaultAttentionProfileByPath: Record<string, string>;
+  onSetWorktreeDefaultAttentionProfile: (worktreePath: string, profileId: string | null) => Promise<void>;
 };
 
 type SessionState = {
@@ -33,18 +41,67 @@ export default function TerminalPane({
   selectedWorktreePath,
   selectedWorktree,
   startupCommand,
-  startupConfigReady
+  startupConfigReady,
+  attentionProfiles,
+  attentionRuntimeCapability,
+  worktreeDefaultAttentionProfileByPath,
+  onSetWorktreeDefaultAttentionProfile
 }: TerminalPaneProps) {
   const terminalClient = useMemo(() => createTerminalClient(), []);
+  const windowFocused = useWindowFocus();
+
   const [sessionsByWorktree, setSessionsByWorktree] = useState<SessionsByWorktree>({});
   const [activeSessionIdByWorktree, setActiveSessionIdByWorktree] = useState<Record<string, string>>({});
   const [dynamicTitles, setDynamicTitles] = useState<Record<string, string>>({});
+  const [sessionProfileOverrideById, setSessionProfileOverrideById] = useState<Record<string, string | "off">>({});
+  const [needsAttentionBySessionId, setNeedsAttentionBySessionId] = useState<Record<string, boolean>>({});
+  const [startupCommandAtCreateBySessionId, setStartupCommandAtCreateBySessionId] = useState<Record<string, string | null>>({});
+  const [attentionRuntimeWarning, setAttentionRuntimeWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sessionsRef = useRef<SessionsByWorktree>({});
 
   useEffect(() => {
     sessionsRef.current = sessionsByWorktree;
   }, [sessionsByWorktree]);
+
+  const findWorktreePathBySessionId = useCallback((sessionId: string): string | null => {
+    for (const [worktreePath, sessions] of Object.entries(sessionsByWorktree)) {
+      if (sessions.some((session) => session.sessionId === sessionId)) {
+        return worktreePath;
+      }
+    }
+    return null;
+  }, [sessionsByWorktree]);
+
+  const resolveProfileId = useCallback(
+    (sessionId: string, sessionWorktreePath: string | null): string | null => {
+      const override = sessionProfileOverrideById[sessionId];
+      if (override) {
+        return override === "off" ? null : override;
+      }
+
+      if (sessionWorktreePath && worktreeDefaultAttentionProfileByPath[sessionWorktreePath]) {
+        return worktreeDefaultAttentionProfileByPath[sessionWorktreePath];
+      }
+
+      const startup = startupCommandAtCreateBySessionId[sessionId] ?? null;
+      if (startup && /\bopencode\b/i.test(startup)) {
+        return "opencode";
+      }
+
+      return null;
+    },
+    [sessionProfileOverrideById, startupCommandAtCreateBySessionId, worktreeDefaultAttentionProfileByPath]
+  );
+
+  const resolveAttentionProfile = useCallback(
+    (sessionId: string): AttentionProfile | null => {
+      const worktreePath = findWorktreePathBySessionId(sessionId);
+      const profileId = resolveProfileId(sessionId, worktreePath);
+      return getProfileById(attentionProfiles, profileId);
+    },
+    [attentionProfiles, findWorktreePathBySessionId, resolveProfileId]
+  );
 
   const createSession = useCallback(
     async (worktreePath: string, branchName?: string) => {
@@ -55,7 +112,7 @@ export default function TerminalPane({
           startupCommand
         );
         const initialTitle = branchName?.replace("refs/heads/", "") || "Terminal";
-        
+
         setSessionsByWorktree((prev) => {
           const existing = prev[worktreePath] || [];
           return {
@@ -63,6 +120,10 @@ export default function TerminalPane({
             [worktreePath]: [...existing, { sessionId, initialTitle }]
           };
         });
+        setStartupCommandAtCreateBySessionId((prev) => ({
+          ...prev,
+          [sessionId]: startupCommand
+        }));
         setActiveSessionIdByWorktree((prev) => ({
           ...prev,
           [worktreePath]: sessionId
@@ -85,6 +146,62 @@ export default function TerminalPane({
 
   const activeSessionId = selectedWorktreePath ? activeSessionIdByWorktree[selectedWorktreePath] : null;
 
+  useEffect(() => {
+    if (!windowFocused || !activeSessionId) {
+      return;
+    }
+
+    setNeedsAttentionBySessionId((prev) => {
+      if (!prev[activeSessionId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[activeSessionId];
+      return next;
+    });
+  }, [activeSessionId, windowFocused]);
+
+  useEffect(() => {
+    const unreadCount = Object.values(needsAttentionBySessionId).filter(Boolean).length;
+    void syncAttentionBadgeCount(unreadCount);
+  }, [needsAttentionBySessionId]);
+
+  const clearSessionAttention = useCallback((sessionId: string) => {
+    setNeedsAttentionBySessionId((prev) => {
+      if (!prev[sessionId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
+
+  const handlePromptReady = useCallback(
+    (sessionId: string) => {
+      if (windowFocused && sessionId === activeSessionId) {
+        return;
+      }
+
+      const profile = resolveAttentionProfile(sessionId);
+      if (!profile || profile.attention_mode === "off") {
+        return;
+      }
+
+      const withNotification = profile.attention_mode === "attention+notification";
+      setNeedsAttentionBySessionId((prev) => {
+        if (prev[sessionId]) {
+          return prev;
+        }
+        const next = { ...prev, [sessionId]: true };
+        const unreadCount = Object.values(next).filter(Boolean).length;
+        void signalAttention(unreadCount, withNotification);
+        return next;
+      });
+    },
+    [activeSessionId, resolveAttentionProfile, windowFocused]
+  );
+
   const handleCloseSession = useCallback(
     async (worktreePath: string, sessionIdToClose: string) => {
       try {
@@ -105,7 +222,7 @@ export default function TerminalPane({
 
         const existing = sessionsRef.current[worktreePath] || [];
         const closedIndex = existing.findIndex((s) => s.sessionId === sessionIdToClose);
-        
+
         let nextActiveId = existing.length > 1 ? existing[0].sessionId : undefined;
         if (closedIndex > 0) {
           nextActiveId = existing[closedIndex - 1].sessionId;
@@ -127,8 +244,22 @@ export default function TerminalPane({
         delete next[sessionIdToClose];
         return next;
       });
+
+      setSessionProfileOverrideById((prev) => {
+        const next = { ...prev };
+        delete next[sessionIdToClose];
+        return next;
+      });
+
+      setStartupCommandAtCreateBySessionId((prev) => {
+        const next = { ...prev };
+        delete next[sessionIdToClose];
+        return next;
+      });
+
+      clearSessionAttention(sessionIdToClose);
     },
-    [terminalClient]
+    [clearSessionAttention, terminalClient]
   );
 
   const worktreeSessions = selectedWorktreePath ? (sessionsByWorktree[selectedWorktreePath] || []) : [];
@@ -158,6 +289,55 @@ export default function TerminalPane({
     }
   }, []);
 
+  const activeSessionAttentionValue = useMemo(() => {
+    if (!activeSessionId) {
+      return "off";
+    }
+    const worktreePath = findWorktreePathBySessionId(activeSessionId);
+    const profileId = resolveProfileId(activeSessionId, worktreePath);
+    return profileId ?? "off";
+  }, [activeSessionId, findWorktreePathBySessionId, resolveProfileId]);
+
+  const profileOptions = useMemo(
+    () => [
+      { value: "off", label: "Off" },
+      ...attentionProfiles.map((profile) => ({
+        value: profile.id,
+        label: profile.name
+      }))
+    ],
+    [attentionProfiles]
+  );
+
+  const handleAttentionProfileChange = useCallback(
+    async (value: string) => {
+      if (!activeSessionId || !selectedWorktreePath) {
+        return;
+      }
+
+      if (value !== "off" && !attentionRuntimeCapability.supported) {
+        setAttentionRuntimeWarning(
+          attentionRuntimeCapability.reason ??
+            "This runtime session may not support window attention blinking."
+        );
+      } else {
+        setAttentionRuntimeWarning(null);
+      }
+
+      const normalized = value === "off" ? "off" : value;
+      setSessionProfileOverrideById((prev) => ({
+        ...prev,
+        [activeSessionId]: normalized
+      }));
+
+      await onSetWorktreeDefaultAttentionProfile(
+        selectedWorktreePath,
+        value === "off" ? null : value
+      );
+    },
+    [activeSessionId, attentionRuntimeCapability, onSetWorktreeDefaultAttentionProfile, selectedWorktreePath]
+  );
+
   return (
     <section
       className="flex h-full min-h-0 flex-col overflow-hidden bg-base"
@@ -166,7 +346,6 @@ export default function TerminalPane({
       aria-label="Terminal"
     >
       <div className="flex-1 flex flex-col min-h-0 relative">
-        {/* Mobile Toggles */}
         <div className="md:hidden flex gap-2 p-2 absolute top-0 right-0 z-50">
           <Button
             size="sm"
@@ -185,54 +364,90 @@ export default function TerminalPane({
         </div>
 
         {selectedWorktreePath && worktreeSessions.length > 0 ? (
-          <div className="flex items-center border-b border-surface0 bg-mantle" role="tablist">
-            {worktreeSessions.map((session) => {
-              const isActive = session.sessionId === activeSessionId;
-              const displayTitle = dynamicTitles[session.sessionId] || session.initialTitle;
-              
-              return (
-                <div
-                  key={session.sessionId}
-                  className={`flex items-center gap-3 px-4 py-2 border-r border-surface0 text-xs font-medium transition-colors group cursor-pointer ${
-                    isActive
-                      ? "bg-base text-text"
-                      : "text-subtext1 hover:bg-surface0/30 hover:text-text"
-                  }`}
-                  data-testid="terminal-tab"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setActiveSessionIdByWorktree((prev) => ({ ...prev, [selectedWorktreePath]: session.sessionId }))}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-none ${isActive ? 'bg-[#fab387]' : 'bg-surface2'}`}></span>
-                  <span className="truncate max-w-[160px]" title={displayTitle}>
-                    {displayTitle}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="opacity-0 group-hover:opacity-100 w-4 h-4 p-0"
-                    data-testid="close-terminal-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleCloseSession(selectedWorktreePath, session.sessionId);
+          <div className="border-b border-surface0 bg-mantle" role="tablist">
+            <div className="flex items-center">
+            <div className="flex min-w-0 flex-1">
+              {worktreeSessions.map((session) => {
+                const isActive = session.sessionId === activeSessionId;
+                const displayTitle = dynamicTitles[session.sessionId] || session.initialTitle;
+                const needsAttention = !!needsAttentionBySessionId[session.sessionId];
+
+                return (
+                  <div
+                    key={session.sessionId}
+                    className={`flex items-center gap-3 px-4 py-2 border-r border-surface0 text-xs font-medium transition-colors group cursor-pointer ${
+                      isActive
+                        ? "bg-base text-text"
+                        : "text-subtext1 hover:bg-surface0/30 hover:text-text"
+                    }`}
+                    data-testid="terminal-tab"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      setActiveSessionIdByWorktree((prev) => ({ ...prev, [selectedWorktreePath]: session.sessionId }));
+                      clearSessionAttention(session.sessionId);
                     }}
                   >
-                    <X size={10} />
-                  </Button>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        needsAttention
+                          ? "bg-amber-400 animate-pulse"
+                          : isActive
+                            ? "bg-[#fab387]"
+                            : "bg-surface2"
+                      }`}
+                      data-testid={needsAttention ? "terminal-attention-dot" : undefined}
+                    />
+                    <span className="truncate max-w-[160px]" title={displayTitle}>
+                      {displayTitle}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="opacity-0 group-hover:opacity-100 w-4 h-4 p-0"
+                      data-testid="close-terminal-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleCloseSession(selectedWorktreePath, session.sessionId);
+                      }}
+                    >
+                      <X size={10} />
+                    </Button>
+                  </div>
+                );
+              })}
+              <Button
+                variant="ghost"
+                className="px-3 py-2 border-r border-surface0 h-full rounded-none group"
+                onClick={() => void createSession(selectedWorktreePath, selectedWorktree?.branch || undefined)}
+                title="New Terminal"
+                disabled={!startupConfigReady}
+              >
+                <div className="bg-surface0/50 group-hover:bg-surface1 p-1 rounded-sm w-5 h-5 flex items-center justify-center transition-colors">
+                  <Plus size={12} />
                 </div>
-              );
-            })}
-            <Button
-              variant="ghost"
-              className="px-3 py-2 border-r border-surface0 h-full rounded-none group"
-              onClick={() => void createSession(selectedWorktreePath, selectedWorktree?.branch || undefined)}
-              title="New Terminal"
-              disabled={!startupConfigReady}
-            >
-              <div className="bg-surface0/50 group-hover:bg-surface1 p-1 rounded-sm w-5 h-5 flex items-center justify-center transition-colors">
-                <Plus size={12} />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 border-l border-surface0 min-w-[260px]">
+              <span className="text-[11px] uppercase tracking-wide text-subtext1">Attention:</span>
+              <Select
+                value={activeSessionAttentionValue}
+                onChange={(value) => {
+                  void handleAttentionProfileChange(value);
+                }}
+                options={profileOptions}
+                className="w-full"
+                disabled={!activeSessionId}
+              />
+            </div>
+          </div>
+            {attentionRuntimeWarning ? (
+              <div className="px-3 pb-2">
+                <Card variant="warning" className="text-xs" data-testid="attention-runtime-warning">
+                  {attentionRuntimeWarning}
+                </Card>
               </div>
-            </Button>
+            ) : null}
           </div>
         ) : null}
 
@@ -253,11 +468,13 @@ export default function TerminalPane({
 
         <div className="flex-1 min-h-0 relative bg-base">
           {allSessions.map((session) => (
-            <TerminalInstance 
-              key={session.sessionId} 
-              sessionId={session.sessionId} 
+            <TerminalInstance
+              key={session.sessionId}
+              sessionId={session.sessionId}
               isActive={session.sessionId === activeSessionId}
               onTitleChange={(title) => handleTitleChange(session.sessionId, title)}
+              attentionProfile={resolveAttentionProfile(session.sessionId)}
+              onPromptReady={handlePromptReady}
             />
           ))}
         </div>

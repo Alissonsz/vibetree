@@ -13,10 +13,13 @@ use changes::{
 };
 use repo::{
     add_repo, get_global_terminal_startup_command, get_global_worktree_base_dir,
-    get_last_selection, list_repo_terminal_startup_commands, list_repo_worktree_base_dirs,
-    list_repos, load_registry_or_default, remove_repo, set_global_terminal_startup_command,
-    set_global_worktree_base_dir, set_last_selection, set_repo_terminal_startup_command,
-    set_repo_worktree_base_dir,
+    get_attention_profiles, get_attention_runtime_capability, get_last_selection,
+    list_repo_terminal_startup_commands, list_repo_worktree_base_dirs, list_repos,
+    list_worktree_default_attention_profiles, load_registry_or_default, remove_repo,
+    set_attention_profiles,
+    set_global_terminal_startup_command, set_global_worktree_base_dir, set_last_selection,
+    set_repo_terminal_startup_command, set_repo_worktree_base_dir,
+    set_worktree_default_attention_profile,
 };
 use terminal::{
     close_terminal_session, create_terminal_session, list_terminal_sessions,
@@ -31,6 +34,7 @@ use worktree::{
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
@@ -55,6 +59,11 @@ pub fn run() {
             set_global_worktree_base_dir,
             list_repo_worktree_base_dirs,
             set_repo_worktree_base_dir,
+            get_attention_profiles,
+            get_attention_runtime_capability,
+            set_attention_profiles,
+            list_worktree_default_attention_profiles,
+            set_worktree_default_attention_profile,
             get_changed_files,
             get_file_content,
             get_file_diff,

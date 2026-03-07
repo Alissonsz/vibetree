@@ -131,14 +131,14 @@ describe("ChangesPane", () => {
     });
 
     const srcRow = getDirectoryRowByName("src");
-    expect(within(srcRow).getByText("▾")).toBeInTheDocument();
+    expect(srcRow.querySelector(".lucide-chevron-down")).toBeInTheDocument();
     expect(screen.getByText("main.ts")).toBeInTheDocument();
     expect(screen.getByText("helpers.ts")).toBeInTheDocument();
 
     srcRow.click();
     await waitFor(() => {
       expect(
-        within(getDirectoryRowByName("src")).getByText("▸")
+        getDirectoryRowByName("src").querySelector(".lucide-chevron-right")
       ).toBeInTheDocument();
     });
     await waitFor(() => {
@@ -150,7 +150,7 @@ describe("ChangesPane", () => {
     srcRow.click();
     await waitFor(() => {
       expect(
-        within(getDirectoryRowByName("src")).getByText("▾")
+        getDirectoryRowByName("src").querySelector(".lucide-chevron-down")
       ).toBeInTheDocument();
     });
     await waitFor(() => {
@@ -190,8 +190,8 @@ describe("ChangesPane", () => {
 
     expect(srcRow).toHaveStyle({ paddingLeft: "0px" });
     expect(componentsRow).toHaveStyle({ paddingLeft: "16px" });
-    expect(readmeRow).toHaveStyle({ paddingLeft: "0px" });
-    expect(fooRow).toHaveStyle({ paddingLeft: "32px" });
+    expect(readmeRow).toHaveStyle({ paddingLeft: "20px" });
+    expect(fooRow).toHaveStyle({ paddingLeft: "52px" });
   });
 
   it("orders directories before files and sorts alphabetically at each level", async () => {
