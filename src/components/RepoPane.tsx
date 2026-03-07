@@ -652,7 +652,7 @@ export default function RepoPane({
                                       className="mt-1"
                                       data-testid={`attention-regex-input-${profile.id}`}
                                       value={regexValue}
-                                      placeholder="Prompt regex (empty disables)"
+                                      placeholder="Prompt regex (empty uses built-in)"
                                       onChange={(event) => {
                                         const nextRegex = event.target.value;
                                         setAttentionProfilesDraft((current) => {

@@ -21,21 +21,21 @@ export const DEFAULT_ATTENTION_PROFILES: AttentionProfile[] = [
   {
     id: "claude",
     name: "Claude Code",
-    prompt_regex: null,
+    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
     attention_mode: "attention",
     debounce_ms: 300
   },
   {
     id: "codex",
     name: "Codex",
-    prompt_regex: null,
+    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
     attention_mode: "attention",
     debounce_ms: 300
   },
   {
     id: "gemini",
     name: "Gemini CLI",
-    prompt_regex: null,
+    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
     attention_mode: "attention",
     debounce_ms: 300
   },
@@ -75,7 +75,9 @@ export function normalizeAttentionProfiles(
 
       const name = (candidate.name ?? "").trim() || defaultProfile.name;
       const promptRegexRaw = candidate.prompt_regex;
-      const promptRegex = typeof promptRegexRaw === "string" ? promptRegexRaw : null;
+      const promptRegex = typeof promptRegexRaw === "string"
+        ? promptRegexRaw
+        : defaultProfile.prompt_regex;
       const attentionMode = isAttentionMode(candidate.attention_mode)
         ? candidate.attention_mode
         : defaultProfile.attention_mode;

@@ -33,4 +33,20 @@ describe("attentionProfiles", () => {
     expect(opencode?.debounce_ms).toBe(300);
     expect(normalized.some((profile) => profile.id === "unknown")).toBe(false);
   });
+
+  it("falls back to built-in regex when saved profile regex is null", () => {
+    const normalized = normalizeAttentionProfiles([
+      {
+        id: "codex",
+        name: "Codex",
+        prompt_regex: null,
+        attention_mode: "attention+notification",
+        debounce_ms: 300
+      }
+    ]);
+
+    const codex = normalized.find((profile) => profile.id === "codex");
+    expect(codex).toBeTruthy();
+    expect(codex?.prompt_regex).toBe("(^|\\r?\\n)(>|›|❯)\\s*$");
+  });
 });
