@@ -47,6 +47,22 @@ describe("attentionProfiles", () => {
 
     const codex = normalized.find((profile) => profile.id === "codex");
     expect(codex).toBeTruthy();
-    expect(codex?.prompt_regex).toBe("(^|\\r?\\n)(>|›|❯)\\s*$");
+    expect(codex?.prompt_regex).toBe("(>|›|❯)\\s*$");
+  });
+
+  it("migrates legacy strict cli regex to current default", () => {
+    const normalized = normalizeAttentionProfiles([
+      {
+        id: "codex",
+        name: "Codex",
+        prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
+        attention_mode: "attention+notification",
+        debounce_ms: 300
+      }
+    ]);
+
+    const codex = normalized.find((profile) => profile.id === "codex");
+    expect(codex).toBeTruthy();
+    expect(codex?.prompt_regex).toBe("(>|›|❯)\\s*$");
   });
 });

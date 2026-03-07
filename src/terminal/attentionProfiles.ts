@@ -9,6 +9,8 @@ export type AttentionProfile = {
 };
 
 const KNOWN_PROFILE_IDS = ["opencode", "claude", "codex", "gemini", "custom"];
+const CLI_PROMPT_REGEX_DEFAULT = "(>|›|❯)\\s*$";
+const LEGACY_CLI_PROMPT_REGEX_DEFAULT = "(^|\\r?\\n)(>|›|❯)\\s*$";
 
 export const DEFAULT_ATTENTION_PROFILES: AttentionProfile[] = [
   {
@@ -21,21 +23,21 @@ export const DEFAULT_ATTENTION_PROFILES: AttentionProfile[] = [
   {
     id: "claude",
     name: "Claude Code",
-    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
+    prompt_regex: CLI_PROMPT_REGEX_DEFAULT,
     attention_mode: "attention",
     debounce_ms: 300
   },
   {
     id: "codex",
     name: "Codex",
-    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
+    prompt_regex: CLI_PROMPT_REGEX_DEFAULT,
     attention_mode: "attention",
     debounce_ms: 300
   },
   {
     id: "gemini",
     name: "Gemini CLI",
-    prompt_regex: "(^|\\r?\\n)(>|›|❯)\\s*$",
+    prompt_regex: CLI_PROMPT_REGEX_DEFAULT,
     attention_mode: "attention",
     debounce_ms: 300
   },
@@ -76,7 +78,11 @@ export function normalizeAttentionProfiles(
       const name = (candidate.name ?? "").trim() || defaultProfile.name;
       const promptRegexRaw = candidate.prompt_regex;
       const promptRegex = typeof promptRegexRaw === "string"
-        ? promptRegexRaw
+        ? (
+            promptRegexRaw === LEGACY_CLI_PROMPT_REGEX_DEFAULT
+              ? defaultProfile.prompt_regex
+              : promptRegexRaw
+          )
         : defaultProfile.prompt_regex;
       const attentionMode = isAttentionMode(candidate.attention_mode)
         ? candidate.attention_mode

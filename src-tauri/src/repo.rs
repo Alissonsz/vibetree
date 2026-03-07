@@ -25,6 +25,8 @@ const ATTENTION_PROFILE_CLAUDE_ID: &str = "claude";
 const ATTENTION_PROFILE_CODEX_ID: &str = "codex";
 const ATTENTION_PROFILE_GEMINI_ID: &str = "gemini";
 const ATTENTION_PROFILE_CUSTOM_ID: &str = "custom";
+const CLI_PROMPT_REGEX_DEFAULT: &str = "(>|›|❯)\\s*$";
+const LEGACY_CLI_PROMPT_REGEX_DEFAULT: &str = "(^|\\r?\\n)(>|›|❯)\\s*$";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoInfo {
@@ -110,21 +112,21 @@ fn default_attention_profiles() -> Vec<AttentionProfile> {
         AttentionProfile {
             id: ATTENTION_PROFILE_CLAUDE_ID.to_string(),
             name: "Claude Code".to_string(),
-            prompt_regex: Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string()),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
             attention_mode: "attention".to_string(),
             debounce_ms: 300,
         },
         AttentionProfile {
             id: ATTENTION_PROFILE_CODEX_ID.to_string(),
             name: "Codex".to_string(),
-            prompt_regex: Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string()),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
             attention_mode: "attention".to_string(),
             debounce_ms: 300,
         },
         AttentionProfile {
             id: ATTENTION_PROFILE_GEMINI_ID.to_string(),
             name: "Gemini CLI".to_string(),
-            prompt_regex: Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string()),
+            prompt_regex: Some(CLI_PROMPT_REGEX_DEFAULT.to_string()),
             attention_mode: "attention".to_string(),
             debounce_ms: 300,
         },
@@ -172,6 +174,13 @@ fn normalize_attention_profiles(loaded: Vec<AttentionProfile>) -> Vec<AttentionP
         .map(|default_profile| {
             if let Some(candidate) = loaded_by_id.get(&default_profile.id) {
                 let name = candidate.name.trim();
+                let prompt_regex = match candidate.prompt_regex.clone() {
+                    Some(regex) if regex == LEGACY_CLI_PROMPT_REGEX_DEFAULT => {
+                        default_profile.prompt_regex.clone()
+                    }
+                    Some(regex) => Some(regex),
+                    None => default_profile.prompt_regex.clone(),
+                };
                 AttentionProfile {
                     id: default_profile.id,
                     name: if name.is_empty() {
@@ -179,10 +188,7 @@ fn normalize_attention_profiles(loaded: Vec<AttentionProfile>) -> Vec<AttentionP
                     } else {
                         name.to_string()
                     },
-                    prompt_regex: candidate
-                        .prompt_regex
-                        .clone()
-                        .or(default_profile.prompt_regex.clone()),
+                    prompt_regex,
                     attention_mode: sanitize_attention_mode(candidate.attention_mode.clone()),
                     debounce_ms: sanitize_debounce_ms(candidate.debounce_ms),
                 }
@@ -1002,10 +1008,25 @@ mod tests {
             .find(|profile| profile.id == "codex")
             .expect("codex should exist");
 
-        assert_eq!(
-            codex.prompt_regex,
-            Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string())
-        );
+        assert_eq!(codex.prompt_regex, Some("(>|›|❯)\\s*$".to_string()));
+    }
+
+    #[test]
+    fn attention_profiles_migrate_legacy_strict_cli_regex() {
+        let profiles = normalize_attention_profiles(vec![AttentionProfile {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            prompt_regex: Some("(^|\\r?\\n)(>|›|❯)\\s*$".to_string()),
+            attention_mode: "attention+notification".to_string(),
+            debounce_ms: 300,
+        }]);
+
+        let codex = profiles
+            .into_iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex should exist");
+
+        assert_eq!(codex.prompt_regex, Some("(>|›|❯)\\s*$".to_string()));
     }
 
     #[test]
