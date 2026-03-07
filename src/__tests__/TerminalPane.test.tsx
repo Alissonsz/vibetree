@@ -173,7 +173,15 @@ describe("TerminalPane", () => {
     await waitFor(() => {
       expect(requestUserAttentionMock).toHaveBeenCalledTimes(1);
       expect(setBadgeCountMock).toHaveBeenCalledWith(1);
-      expect(screen.getByTestId("terminal-attention-dot")).toBeInTheDocument();
+      const dot = screen.getByTestId("terminal-attention-dot");
+      expect(dot).toBeInTheDocument();
+      expect(dot.className).toContain("animate-pulse");
+    });
+
+    fireEvent.click(screen.getAllByTestId("terminal-tab")[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-attention-dot")).not.toBeInTheDocument();
     });
   });
 

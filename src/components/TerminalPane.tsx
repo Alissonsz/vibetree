@@ -144,9 +144,10 @@ export default function TerminalPane({
   const activeSessionId = selectedWorktreePath ? activeSessionIdByWorktree[selectedWorktreePath] : null;
 
   useEffect(() => {
-    if (!activeSessionId) {
+    if (!windowFocused || !activeSessionId) {
       return;
     }
+
     setNeedsAttentionBySessionId((prev) => {
       if (!prev[activeSessionId]) {
         return prev;
@@ -155,7 +156,7 @@ export default function TerminalPane({
       delete next[activeSessionId];
       return next;
     });
-  }, [activeSessionId]);
+  }, [activeSessionId, windowFocused]);
 
   useEffect(() => {
     const unreadCount = Object.values(needsAttentionBySessionId).filter(Boolean).length;
@@ -377,9 +378,7 @@ export default function TerminalPane({
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
                         needsAttention
-                          ? isActive
-                            ? "bg-amber-400"
-                            : "bg-amber-400 animate-pulse"
+                          ? "bg-amber-400 animate-pulse"
                           : isActive
                             ? "bg-[#fab387]"
                             : "bg-surface2"
