@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import RepoPane from "../components/RepoPane";
 import type { RepoInfo, WorktreeInfo } from "../types";
+import { DEFAULT_ATTENTION_PROFILES } from "../terminal/attentionProfiles";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn()
@@ -70,6 +71,10 @@ describe("RepoPane", () => {
         repoWorktreeBaseDirsByRepoId={{}}
         onSetRepoWorktreeBaseDir={vi.fn()}
         onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={vi.fn(async () => {
+          return;
+        })}
       />
     );
 
@@ -145,6 +150,10 @@ describe("RepoPane", () => {
         repoWorktreeBaseDirsByRepoId={{}}
         onSetRepoWorktreeBaseDir={vi.fn()}
         onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={vi.fn(async () => {
+          return;
+        })}
       />
     );
 
@@ -203,6 +212,10 @@ describe("RepoPane", () => {
         repoWorktreeBaseDirsByRepoId={{}}
         onSetRepoWorktreeBaseDir={vi.fn()}
         onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={vi.fn(async () => {
+          return;
+        })}
       />
     );
 
@@ -264,7 +277,11 @@ describe("RepoPane", () => {
       globalWorktreeBaseDir: "",
       repoWorktreeBaseDirsByRepoId: {},
       onSetRepoWorktreeBaseDir: vi.fn(async () => {}),
-      onSetGlobalWorktreeBaseDir: vi.fn(async () => {})
+      onSetGlobalWorktreeBaseDir: vi.fn(async () => {}),
+      attentionProfiles: DEFAULT_ATTENTION_PROFILES,
+      onSetAttentionProfiles: vi.fn(async () => {
+        return;
+      })
     };
 
     const { rerender } = render(
@@ -288,5 +305,202 @@ describe("RepoPane", () => {
 
     fireEvent.click(screen.getAllByTestId("repo-config-btn")[1]);
     expect(screen.getByTestId("repo-startup-command-input")).toHaveValue("opencode");
+  });
+
+  it("disables attention save when regex is invalid", () => {
+    const repo: RepoInfo = {
+      id: "repo-1",
+      path: "/tmp/repo",
+      name: "repo"
+    };
+
+    const worktree: WorktreeInfo = {
+      path: "/tmp/repo",
+      head: "abc",
+      branch: "main",
+      is_bare: false
+    };
+
+    const setAttentionProfiles = vi.fn(async () => {
+      return;
+    });
+
+    render(
+      <RepoPane
+        mobileOpen={false}
+        onRequestClose={vi.fn()}
+        repos={[repo]}
+        worktreesByRepoId={{ [repo.id]: [worktree] }}
+        selectedRepoId={repo.id}
+        selectedWorktreePath={worktree.path}
+        notification={null}
+        onAddRepo={vi.fn(async () => {
+          return;
+        })}
+        onRemoveRepo={vi.fn(async () => {
+          return;
+        })}
+        onSelectWorktree={vi.fn()}
+        onWorktreesChanged={vi.fn()}
+        onDismissNotification={vi.fn()}
+        globalStartupCommand="opencode"
+        repoStartupCommandsByRepoId={{}}
+        onSetRepoStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        onSetGlobalStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={setAttentionProfiles}
+      />
+    );
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[0]);
+    fireEvent.change(screen.getByTestId("attention-regex-input-opencode"), {
+      target: { value: "(^|\\r?\\n)>\\s*" }
+    });
+
+    const saveButton = screen.getByTestId("attention-save-global-btn");
+    expect(saveButton).toBeDisabled();
+    expect(setAttentionProfiles).not.toHaveBeenCalled();
+  });
+
+  it("saves attention profiles and supports reset to defaults", async () => {
+    const repo: RepoInfo = {
+      id: "repo-1",
+      path: "/tmp/repo",
+      name: "repo"
+    };
+
+    const worktree: WorktreeInfo = {
+      path: "/tmp/repo",
+      head: "abc",
+      branch: "main",
+      is_bare: false
+    };
+
+    const setAttentionProfiles = vi.fn(async () => {
+      return;
+    });
+
+    render(
+      <RepoPane
+        mobileOpen={false}
+        onRequestClose={vi.fn()}
+        repos={[repo]}
+        worktreesByRepoId={{ [repo.id]: [worktree] }}
+        selectedRepoId={repo.id}
+        selectedWorktreePath={worktree.path}
+        notification={null}
+        onAddRepo={vi.fn(async () => {
+          return;
+        })}
+        onRemoveRepo={vi.fn(async () => {
+          return;
+        })}
+        onSelectWorktree={vi.fn()}
+        onWorktreesChanged={vi.fn()}
+        onDismissNotification={vi.fn()}
+        globalStartupCommand="opencode"
+        repoStartupCommandsByRepoId={{}}
+        onSetRepoStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        onSetGlobalStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={setAttentionProfiles}
+      />
+    );
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[0]);
+
+    fireEvent.change(screen.getByTestId("attention-regex-input-opencode"), {
+      target: { value: "(^|\\r?\\n)>>\\s*$" }
+    });
+    fireEvent.click(screen.getByTestId("attention-save-global-btn"));
+
+    await waitFor(() => {
+      expect(setAttentionProfiles).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByTestId("attention-regex-input-opencode"), {
+      target: { value: "foo$" }
+    });
+    fireEvent.click(screen.getByTestId("attention-reset-defaults-btn"));
+
+    expect(screen.getByTestId("attention-regex-input-opencode")).toHaveValue("(^|\\r?\\n)>\\s*$");
+  });
+
+  it("keeps config menu open when changing attention mode via dropdown", async () => {
+    const repo: RepoInfo = {
+      id: "repo-1",
+      path: "/tmp/repo",
+      name: "repo"
+    };
+
+    const worktree: WorktreeInfo = {
+      path: "/tmp/repo",
+      head: "abc",
+      branch: "main",
+      is_bare: false
+    };
+
+    render(
+      <RepoPane
+        mobileOpen={false}
+        onRequestClose={vi.fn()}
+        repos={[repo]}
+        worktreesByRepoId={{ [repo.id]: [worktree] }}
+        selectedRepoId={repo.id}
+        selectedWorktreePath={worktree.path}
+        notification={null}
+        onAddRepo={vi.fn(async () => {
+          return;
+        })}
+        onRemoveRepo={vi.fn(async () => {
+          return;
+        })}
+        onSelectWorktree={vi.fn()}
+        onWorktreesChanged={vi.fn()}
+        onDismissNotification={vi.fn()}
+        globalStartupCommand="opencode"
+        repoStartupCommandsByRepoId={{}}
+        onSetRepoStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        onSetGlobalStartupCommand={vi.fn(async () => {
+          return;
+        })}
+        globalWorktreeBaseDir=""
+        repoWorktreeBaseDirsByRepoId={{}}
+        onSetRepoWorktreeBaseDir={vi.fn()}
+        onSetGlobalWorktreeBaseDir={vi.fn()}
+        attentionProfiles={DEFAULT_ATTENTION_PROFILES}
+        onSetAttentionProfiles={vi.fn(async () => {
+          return;
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getAllByTestId("repo-config-btn")[0]);
+    expect(screen.getByTestId("repo-config-menu")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Attention" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Off" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("repo-config-menu")).toBeInTheDocument();
+    });
   });
 });

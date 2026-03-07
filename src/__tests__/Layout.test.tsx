@@ -28,6 +28,22 @@ vi.mock("@tauri-apps/api/core", () => ({
       return {};
     }
 
+    if (command === "get_global_worktree_base_dir") {
+      return null;
+    }
+
+    if (command === "list_repo_worktree_base_dirs") {
+      return {};
+    }
+
+    if (command === "get_attention_profiles") {
+      return [];
+    }
+
+    if (command === "list_worktree_default_attention_profiles") {
+      return {};
+    }
+
     return undefined;
   })
 }));
@@ -64,12 +80,15 @@ describe("Layout", () => {
         return undefined as never;
       }
 
-      if (command === "get_global_terminal_startup_command") {
+      if (
+        command === "get_global_terminal_startup_command" ||
+        command === "list_repo_terminal_startup_commands" ||
+        command === "get_global_worktree_base_dir" ||
+        command === "list_repo_worktree_base_dirs" ||
+        command === "get_attention_profiles" ||
+        command === "list_worktree_default_attention_profiles"
+      ) {
         throw new Error("load failed");
-      }
-
-      if (command === "list_repo_terminal_startup_commands") {
-        return {} as never;
       }
 
       return undefined as never;
@@ -78,7 +97,11 @@ describe("Layout", () => {
     render(<Layout />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("startup-config-error")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Unable to load configuration. Using defaults until settings are saved again."
+        )
+      ).toBeInTheDocument();
     });
   });
 });

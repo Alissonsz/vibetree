@@ -10,6 +10,8 @@ import {
 import ChangesPane from "./ChangesPane";
 import { useAppState } from "../hooks/useAppState";
 import { createReposClient } from "../hooks/useRepos";
+import { DEFAULT_ATTENTION_PROFILES, normalizeAttentionProfiles } from "../terminal/attentionProfiles";
+import type { AttentionProfile } from "../types";
 import RepoPane from "./RepoPane";
 import TerminalPane from "./TerminalPane";
 
@@ -52,6 +54,8 @@ export default function Layout() {
   const [isGlobalStartupSaving, setIsGlobalStartupSaving] = useState(false);
   const [globalTerminalStartupCommand, setGlobalTerminalStartupCommand] = useState<string | null>(null);
   const [repoTerminalStartupByRepoId, setRepoTerminalStartupByRepoId] = useState<Record<string, string>>({});
+  const [attentionProfiles, setAttentionProfiles] = useState<AttentionProfile[]>(DEFAULT_ATTENTION_PROFILES);
+  const [worktreeDefaultAttentionProfileByPath, setWorktreeDefaultAttentionProfileByPath] = useState<Record<string, string>>({});
   
   const [globalWorktreeBaseDir, setGlobalWorktreeBaseDir] = useState<string | null>(null);
   const [repoWorktreeBaseDirsByRepoId, setRepoWorktreeBaseDirsByRepoId] = useState<Record<string, string>>({});
@@ -78,11 +82,20 @@ export default function Layout() {
 
     async function loadConfig() {
       try {
-        const [globalCommand, repoCommands, globalBaseDir, repoBaseDirs] = await Promise.all([
+        const [
+          globalCommand,
+          repoCommands,
+          globalBaseDir,
+          repoBaseDirs,
+          loadedAttentionProfiles,
+          loadedWorktreeDefaults
+        ] = await Promise.all([
           reposClient.getGlobalTerminalStartupCommand(),
           reposClient.listRepoTerminalStartupCommands(),
           reposClient.getGlobalWorktreeBaseDir(),
-          reposClient.listRepoWorktreeBaseDirs()
+          reposClient.listRepoWorktreeBaseDirs(),
+          reposClient.getAttentionProfiles(),
+          reposClient.listWorktreeDefaultAttentionProfiles()
         ]);
 
         if (!active) return;
@@ -104,10 +117,16 @@ export default function Layout() {
               .filter((entry): entry is [string, string] => entry[1] !== null)
             )
           );
+          setAttentionProfiles(
+            normalizeAttentionProfiles(loadedAttentionProfiles, DEFAULT_ATTENTION_PROFILES)
+          );
+          setWorktreeDefaultAttentionProfileByPath(loadedWorktreeDefaults);
         }
         setStartupConfigError(null);
       } catch {
         if (active) {
+          setAttentionProfiles(DEFAULT_ATTENTION_PROFILES);
+          setWorktreeDefaultAttentionProfileByPath({});
           setStartupConfigError(
             "Unable to load configuration. Using defaults until settings are saved again."
           );
@@ -309,6 +328,12 @@ export default function Layout() {
             setGlobalWorktreeBaseDir(normalized);
             setStartupConfigError(null);
           }}
+          attentionProfiles={attentionProfiles}
+          onSetAttentionProfiles={async (profiles: AttentionProfile[]) => {
+            startupConfigMutatedRef.current = true;
+            await reposClient.setAttentionProfiles(profiles);
+            setAttentionProfiles(normalizeAttentionProfiles(profiles, DEFAULT_ATTENTION_PROFILES));
+          }}
         />
 
         <div
@@ -325,6 +350,14 @@ export default function Layout() {
           selectedWorktree={selectedWorktree}
           startupCommand={resolvedStartupCommand}
           startupConfigReady={startupConfigLoaded}
+          attentionProfiles={attentionProfiles}
+          worktreeDefaultAttentionProfileByPath={worktreeDefaultAttentionProfileByPath}
+          onSetWorktreeDefaultAttentionProfile={async (worktreePath: string, profileId: string | null) => {
+            startupConfigMutatedRef.current = true;
+            await reposClient.setWorktreeDefaultAttentionProfile(worktreePath, profileId);
+            const refreshed = await reposClient.listWorktreeDefaultAttentionProfiles();
+            setWorktreeDefaultAttentionProfileByPath(refreshed);
+          }}
         />
 
         <div

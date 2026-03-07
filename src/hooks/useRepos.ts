@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { RepoInfo } from "../types";
+import type { AttentionProfile, RepoInfo } from "../types";
 
 export type RepoInvoker = <T>(
   command: string,
@@ -20,6 +20,10 @@ export type ReposClient = {
   setGlobalWorktreeBaseDir: (dir: string | null) => Promise<void>;
   listRepoWorktreeBaseDirs: () => Promise<Record<string, string>>;
   setRepoWorktreeBaseDir: (repoId: string, dir: string | null) => Promise<void>;
+  getAttentionProfiles: () => Promise<AttentionProfile[]>;
+  setAttentionProfiles: (profiles: AttentionProfile[]) => Promise<void>;
+  listWorktreeDefaultAttentionProfiles: () => Promise<Record<string, string>>;
+  setWorktreeDefaultAttentionProfile: (worktreePath: string, profileId: string | null) => Promise<void>;
 };
 
 export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
@@ -44,7 +48,15 @@ export function createReposClient(invokeFn: RepoInvoker = invoke): ReposClient {
     listRepoWorktreeBaseDirs: () =>
       invokeFn<Record<string, string>>("list_repo_worktree_base_dirs"),
     setRepoWorktreeBaseDir: (repoId, dir) =>
-      invokeFn<void>("set_repo_worktree_base_dir", { repoId, dir })
+      invokeFn<void>("set_repo_worktree_base_dir", { repoId, dir }),
+    getAttentionProfiles: () =>
+      invokeFn<AttentionProfile[]>("get_attention_profiles"),
+    setAttentionProfiles: (profiles) =>
+      invokeFn<void>("set_attention_profiles", { profiles }),
+    listWorktreeDefaultAttentionProfiles: () =>
+      invokeFn<Record<string, string>>("list_worktree_default_attention_profiles"),
+    setWorktreeDefaultAttentionProfile: (worktreePath, profileId) =>
+      invokeFn<void>("set_worktree_default_attention_profile", { worktreePath, profileId })
   };
 }
 

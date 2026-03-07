@@ -3,12 +3,15 @@ import { Plus, X, Settings2, FolderRoot, GitBranch, Trash, Loader2 } from "lucid
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorktreeChanges, removeWorktree } from "../hooks/useWorktrees";
 import { getChangedFiles } from "../hooks/useChanges";
+import { DEFAULT_ATTENTION_PROFILES, type AttentionMode } from "../terminal/attentionProfiles";
+import { compilePromptRegex } from "../terminal/promptReady";
 import type { RepoInfo, WorktreeInfo, ChangedFile } from "../types";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { Card } from "./ui/Card";
 import { Modal } from "./ui/Modal";
 import { CreateWorktreeModal } from "./CreateWorktreeModal";
+import { Select } from "./ui/Select";
 
 type RepoPaneProps = {
   mobileOpen: boolean;
@@ -39,6 +42,22 @@ type RepoPaneProps = {
     dir: string | null,
   ) => Promise<void>;
   onSetGlobalWorktreeBaseDir: (dir: string | null) => Promise<void>;
+  attentionProfiles: Array<{
+    id: string;
+    name: string;
+    prompt_regex: string | null;
+    attention_mode: AttentionMode;
+    debounce_ms: number;
+  }>;
+  onSetAttentionProfiles: (
+    profiles: Array<{
+      id: string;
+      name: string;
+      prompt_regex: string | null;
+      attention_mode: AttentionMode;
+      debounce_ms: number;
+    }>,
+  ) => Promise<void>;
 };
 
 type RepoWatchProps = {
@@ -82,6 +101,8 @@ export default function RepoPane({
   repoWorktreeBaseDirsByRepoId,
   onSetRepoWorktreeBaseDir,
   onSetGlobalWorktreeBaseDir,
+  attentionProfiles,
+  onSetAttentionProfiles,
 }: RepoPaneProps) {
   const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
 
@@ -101,6 +122,9 @@ export default function RepoPane({
   const [startupSavingByRepoId, setStartupSavingByRepoId] = useState<
     Record<string, boolean>
   >({});
+  const [attentionProfilesDraft, setAttentionProfilesDraft] = useState(attentionProfiles);
+  const [attentionSaveError, setAttentionSaveError] = useState<string | null>(null);
+  const [attentionSaving, setAttentionSaving] = useState(false);
   const startupSaveInFlightRef = useRef<Set<string>>(new Set());
 
   const [createWorktreeRepoId, setCreateWorktreeRepoId] = useState<string | null>(null);
@@ -155,12 +179,17 @@ export default function RepoPane({
   };
 
   useEffect(() => {
+    setAttentionProfilesDraft(attentionProfiles);
+  }, [attentionProfiles]);
+
+  useEffect(() => {
     if (!configRepoId) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest("[data-repo-config-root='true']")) return;
+      if (target.closest("[data-select-dropdown='true']")) return;
       setConfigRepoId(null);
     };
 
@@ -368,6 +397,8 @@ export default function RepoPane({
                                   globalStartupCommand,
                               };
                             });
+                            setAttentionProfilesDraft(attentionProfiles);
+                            setAttentionSaveError(null);
                           }
                         }}
                       >
@@ -596,6 +627,153 @@ export default function RepoPane({
                                 ? "Saving..."
                                 : "Use global default"}
                             </Button>
+
+                            <div className="my-3 h-px bg-surface0" />
+
+                            <p className="text-[11px] uppercase tracking-wide text-subtext1/80">
+                              Attention profiles
+                            </p>
+                            <div className="mt-2 space-y-2">
+                              {attentionProfilesDraft.map((profile, index) => {
+                                const regexValue = profile.prompt_regex ?? "";
+                                const regexResult = regexValue.trim()
+                                  ? compilePromptRegex(regexValue)
+                                  : null;
+                                const regexError = regexResult && !regexResult.ok ? regexResult.error : null;
+
+                                return (
+                                  <div
+                                    key={profile.id}
+                                    className="rounded-sm border border-surface0 px-2 py-2"
+                                  >
+                                    <p className="text-[11px] text-text font-medium">{profile.name}</p>
+                                    <Input
+                                      type="text"
+                                      className="mt-1"
+                                      data-testid={`attention-regex-input-${profile.id}`}
+                                      value={regexValue}
+                                      placeholder="Prompt regex (empty disables)"
+                                      onChange={(event) => {
+                                        const nextRegex = event.target.value;
+                                        setAttentionProfilesDraft((current) => {
+                                          const next = [...current];
+                                          next[index] = {
+                                            ...next[index],
+                                            prompt_regex: nextRegex.trim() ? nextRegex : null
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      aria-label={`Prompt regex for ${profile.name}`}
+                                    />
+                                    <Select
+                                      className="mt-1"
+                                      value={profile.attention_mode}
+                                      onChange={(value) => {
+                                        const mode = value as AttentionMode;
+                                        setAttentionProfilesDraft((current) => {
+                                          const next = [...current];
+                                          next[index] = {
+                                            ...next[index],
+                                            attention_mode: mode
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      options={[
+                                        { value: "off", label: "Off" },
+                                        { value: "attention", label: "Attention" },
+                                        {
+                                          value: "attention+notification",
+                                          label: "Attention + OS Notification"
+                                        }
+                                      ]}
+                                    />
+                                    <Input
+                                      type="number"
+                                      className="mt-1"
+                                      value={String(profile.debounce_ms)}
+                                      min={50}
+                                      max={2000}
+                                      onChange={(event) => {
+                                        const parsed = Number(event.target.value);
+                                        const debounceMs = Number.isFinite(parsed)
+                                          ? Math.max(50, Math.min(2000, Math.round(parsed)))
+                                          : 300;
+                                        setAttentionProfilesDraft((current) => {
+                                          const next = [...current];
+                                          next[index] = {
+                                            ...next[index],
+                                            debounce_ms: debounceMs
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      aria-label={`Debounce milliseconds for ${profile.name}`}
+                                    />
+                                    {regexError ? (
+                                      <p className="mt-1 text-[10px] text-red">{regexError}</p>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+
+                              <div className="flex gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  className="text-[11px]"
+                                  data-testid="attention-save-global-btn"
+                                  onClick={() => {
+                                    const invalid = attentionProfilesDraft.some((profile) => {
+                                      if (!profile.prompt_regex || !profile.prompt_regex.trim()) {
+                                        return false;
+                                      }
+                                      const compiled = compilePromptRegex(profile.prompt_regex);
+                                      return !compiled.ok;
+                                    });
+
+                                    if (invalid) {
+                                      return;
+                                    }
+
+                                    setAttentionSaving(true);
+                                    setAttentionSaveError(null);
+                                    void onSetAttentionProfiles(attentionProfilesDraft)
+                                      .catch(() => {
+                                        setAttentionSaveError("Unable to save attention profiles.");
+                                      })
+                                      .finally(() => {
+                                        setAttentionSaving(false);
+                                      });
+                                  }}
+                                  disabled={attentionSaving || attentionProfilesDraft.some((profile) => {
+                                    if (!profile.prompt_regex || !profile.prompt_regex.trim()) {
+                                      return false;
+                                    }
+                                    const compiled = compilePromptRegex(profile.prompt_regex);
+                                    return !compiled.ok;
+                                  })}
+                                >
+                                  {attentionSaving ? "Saving..." : "Save global"}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  className="text-[11px]"
+                                  data-testid="attention-reset-defaults-btn"
+                                  onClick={() => {
+                                    setAttentionProfilesDraft(DEFAULT_ATTENTION_PROFILES);
+                                  }}
+                                  disabled={attentionSaving}
+                                >
+                                  Reset to defaults
+                                </Button>
+                              </div>
+                              {attentionSaveError ? (
+                                <p className="text-[11px] text-red">{attentionSaveError}</p>
+                              ) : null}
+                            </div>
                           </div>
 
                           <div className="my-1 h-px bg-surface0" />

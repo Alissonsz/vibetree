@@ -3,23 +3,76 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { createTerminalClient, useTerminalOutput } from "../hooks/useTerminal";
+import type { AttentionProfile } from "../types";
+import { compilePromptRegex, PromptReadyTracker } from "../terminal/promptReady";
 
 type TerminalInstanceProps = {
   sessionId: string;
   isActive: boolean;
   onTitleChange?: (title: string) => void;
+  attentionProfile?: AttentionProfile | null;
+  onPromptReady?: (sessionId: string) => void;
+  onUserActivity?: (sessionId: string) => void;
 };
 
-export default function TerminalInstance({ sessionId, isActive, onTitleChange }: TerminalInstanceProps) {
+export default function TerminalInstance({
+  sessionId,
+  isActive,
+  onTitleChange,
+  attentionProfile = null,
+  onPromptReady,
+  onUserActivity
+}: TerminalInstanceProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalClient = useRef(createTerminalClient());
   const onTitleChangeRef = useRef(onTitleChange);
+  const onUserActivityRef = useRef(onUserActivity);
+  const promptReadyTrackerRef = useRef<PromptReadyTracker | null>(null);
+
+  useEffect(() => {
+    promptReadyTrackerRef.current?.dispose();
+    promptReadyTrackerRef.current = null;
+
+    if (!attentionProfile) {
+      return;
+    }
+
+    if (attentionProfile.attention_mode === "off") {
+      return;
+    }
+
+    if (!attentionProfile.prompt_regex) {
+      return;
+    }
+
+    const compiled = compilePromptRegex(attentionProfile.prompt_regex);
+    if (!compiled.ok) {
+      return;
+    }
+
+    promptReadyTrackerRef.current = new PromptReadyTracker({
+      promptRegex: compiled.regex,
+      debounceMs: attentionProfile.debounce_ms,
+      onReady: () => {
+        onPromptReady?.(sessionId);
+      }
+    });
+
+    return () => {
+      promptReadyTrackerRef.current?.dispose();
+      promptReadyTrackerRef.current = null;
+    };
+  }, [attentionProfile, onPromptReady, sessionId]);
 
   useEffect(() => {
     onTitleChangeRef.current = onTitleChange;
   }, [onTitleChange]);
+
+  useEffect(() => {
+    onUserActivityRef.current = onUserActivity;
+  }, [onUserActivity]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -96,6 +149,8 @@ export default function TerminalInstance({ sessionId, isActive, onTitleChange }:
       }, 10);
 
       term.onData((data) => {
+        onUserActivityRef.current?.(sessionId);
+        promptReadyTrackerRef.current?.onUserInput(data);
         void terminalClient.current.writeInput(sessionId, data);
       });
 
@@ -142,6 +197,7 @@ export default function TerminalInstance({ sessionId, isActive, onTitleChange }:
   }, [isActive]);
 
   const handleOutput = useCallback((data: string) => {
+    promptReadyTrackerRef.current?.onTerminalOutput(data);
     if (xtermRef.current) {
       xtermRef.current.write(data);
     }

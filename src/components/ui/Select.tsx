@@ -87,6 +87,7 @@ export function Select({
       {isOpen && rect && createPortal(
         <div 
           ref={dropdownRef}
+          data-select-dropdown="true"
           className="fixed z-[9999] bg-mantle border border-surface0 rounded-sm shadow-xl max-h-60 overflow-y-auto py-1"
           style={{
             top: rect.bottom + 4,

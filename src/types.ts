@@ -35,3 +35,5 @@ export type ChangedFile = {
   additions: number | null;
   deletions: number | null;
 };
+
+export type { AttentionMode, AttentionProfile } from "./terminal/attentionProfiles";
