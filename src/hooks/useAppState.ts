@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { createReposClient } from "./useRepos";
 import { listWorktrees, startWatchingRepo, stopWatchingRepo } from "./useWorktrees";
 import type { RepoInfo, SelectionState, WorktreeInfo } from "../types";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 export type AppState = SelectionState & {
   repos: RepoInfo[];
@@ -49,6 +52,12 @@ type ClearNotificationAction = {
   type: "CLEAR_NOTIFICATION";
 };
 
+type SetWorktreeWaitingStateAction = {
+  type: "SET_WORKTREE_WAITING_STATE";
+  worktreePath: string;
+  isWaiting: boolean;
+};
+
 export type AppStateAction =
   | SetReposAction
   | AddRepoAction
@@ -57,7 +66,8 @@ export type AppStateAction =
   | SelectWorktreeAction
   | SetSelectedRepoAction
   | ClearSelectionAction
-  | ClearNotificationAction;
+  | ClearNotificationAction
+  | SetWorktreeWaitingStateAction;
 
 export const initialAppState: AppState = {
   repos: [],
@@ -177,9 +187,21 @@ export function appStateReducer(
     }
 
     case "SET_WORKTREES": {
+      const existingWorktrees = state.worktreesByRepoId[action.repoId] || [];
+      const waitingPaths = new Set(
+        existingWorktrees
+          .filter((w) => w.is_waiting_for_user)
+          .map((w) => w.path)
+      );
+
+      const mergedWorktrees = action.worktrees.map((w) => ({
+        ...w,
+        is_waiting_for_user: waitingPaths.has(w.path) || w.is_waiting_for_user
+      }));
+
       const nextWorktreesByRepoId = {
         ...state.worktreesByRepoId,
-        [action.repoId]: action.worktrees
+        [action.repoId]: mergedWorktrees
       };
 
       if (state.selectedRepoId === null) {
@@ -229,13 +251,49 @@ export function appStateReducer(
       };
     }
 
-    case "SELECT_WORKTREE":
+    case "SET_WORKTREE_WAITING_STATE": {
+      const nextWorktreesByRepoId = { ...state.worktreesByRepoId };
+      let updated = false;
+
+      for (const [repoId, worktrees] of Object.entries(nextWorktreesByRepoId)) {
+        const index = worktrees.findIndex((w) => w.path === action.worktreePath);
+        if (index !== -1) {
+          const nextWorktrees = [...worktrees];
+          nextWorktrees[index] = { ...nextWorktrees[index], is_waiting_for_user: action.isWaiting };
+          nextWorktreesByRepoId[repoId] = nextWorktrees;
+          updated = true;
+          break;
+        }
+      }
+
+      if (!updated) {
+        return state;
+      }
+
+      return {
+        ...state,
+        worktreesByRepoId: nextWorktreesByRepoId
+      };
+    }
+
+    case "SELECT_WORKTREE": {
+      const nextWorktreesByRepoId = { ...state.worktreesByRepoId };
+      const worktrees = nextWorktreesByRepoId[action.repoId];
+      
+      if (worktrees) {
+        nextWorktreesByRepoId[action.repoId] = worktrees.map(w => 
+          w.path === action.worktreePath ? { ...w, is_waiting_for_user: false } : w
+        );
+      }
+
       return {
         ...state,
         selectedRepoId: action.repoId,
         selectedWorktreePath: action.worktreePath,
+        worktreesByRepoId: nextWorktreesByRepoId,
         notification: null
       };
+    }
 
     case "SET_SELECTED_REPO":
       return {
@@ -266,18 +324,16 @@ export function useAppState() {
   const reposClient = useMemo(() => createReposClient(), []);
   const [state, dispatch] = useReducer(appStateReducer, initialAppState);
   const latestReposRef = useRef<RepoInfo[]>([]);
+  const selectedWorktreePathRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
 
   useEffect(() => {
     latestReposRef.current = state.repos;
-  }, [state.repos]);
+    selectedWorktreePathRef.current = state.selectedWorktreePath;
+  }, [state.repos, state.selectedWorktreePath]);
 
   const setWorktrees = useCallback((repoId: string, worktrees: WorktreeInfo[]) => {
     dispatch({ type: "SET_WORKTREES", repoId, worktrees });
-  }, []);
-
-  const selectWorktree = useCallback((repoId: string, worktreePath: string) => {
-    dispatch({ type: "SELECT_WORKTREE", repoId, worktreePath });
   }, []);
 
   const clearNotification = useCallback(() => {
@@ -304,6 +360,137 @@ export function useAppState() {
     },
     [reposClient]
   );
+
+  const idleTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const isWaitingMapRef = useRef<Map<string, boolean>>(new Map());
+  const isBusyMapRef = useRef<Map<string, boolean>>(new Map());
+  const activeSessionIdByWorktreeRef = useRef<Record<string, string>>({});
+
+  const selectWorktree = useCallback((repoId: string, worktreePath: string) => {
+    dispatch({ type: "SELECT_WORKTREE", repoId, worktreePath });
+  }, []);
+
+  const setActiveSession = useCallback((worktreePath: string, sessionId: string) => {
+    activeSessionIdByWorktreeRef.current[worktreePath] = sessionId;
+    // When switching sessions, if the new session was waiting, clear it
+    if (isWaitingMapRef.current.get(sessionId)) {
+      dispatch({ type: "SET_WORKTREE_WAITING_STATE", worktreePath, isWaiting: false });
+      isWaitingMapRef.current.set(sessionId, false);
+    }
+  }, []);
+
+  const setWorktreeWaitingState = useCallback((worktreePath: string, isWaiting: boolean) => {
+    dispatch({ type: "SET_WORKTREE_WAITING_STATE", worktreePath, isWaiting });
+  }, []);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      const currentPath = selectedWorktreePathRef.current;
+      if (currentPath) {
+        const activeSessionId = activeSessionIdByWorktreeRef.current[currentPath];
+        if (activeSessionId && isWaitingMapRef.current.get(activeSessionId)) {
+          setWorktreeWaitingState(currentPath, false);
+          isWaitingMapRef.current.set(activeSessionId, false);
+        }
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [setWorktreeWaitingState]);
+
+  useEffect(() => {
+    let unlistenAgentFinished: (() => void) | undefined;
+    let unlistenTerminalOutput: (() => void) | undefined;
+    
+    async function triggerOSNotification(title: string, body: string) {
+      const permissionGranted = await isPermissionGranted() || (await requestPermission() === "granted");
+      
+      if (permissionGranted) {
+        // Try the plugin first
+        void sendNotification({ title, body });
+        // Direct Rust/AppleScript fallback for macOS dev mode
+        void invoke("send_system_notification", { title, body });
+      }
+    }
+
+    async function triggerWaiting(sessionId: string, worktreePath: string, force: boolean = false) {
+      // If not "busy", don't trigger idle notification (prevents spam)
+      if (!force && !isBusyMapRef.current.get(sessionId)) return;
+      if (isWaitingMapRef.current.get(sessionId)) return;
+      
+      const isSelectedWorktree = selectedWorktreePathRef.current === worktreePath;
+      const isActiveSession = activeSessionIdByWorktreeRef.current[worktreePath] === sessionId;
+      const isWindowFocused = document.hasFocus();
+
+      // If the user is already looking at this EXACT terminal tab in the foreground, 
+      // they don't need a notification or a blue dot.
+      if (isSelectedWorktree && isActiveSession && isWindowFocused) {
+        isBusyMapRef.current.set(sessionId, false);
+        return;
+      }
+
+      setWorktreeWaitingState(worktreePath, true);
+      isWaitingMapRef.current.set(sessionId, true);
+      isBusyMapRef.current.set(sessionId, false);
+      
+      const branchName = worktreePath.split("/").pop() || "workspace";
+      void triggerOSNotification(
+        "Agent Waiting",
+        `Terminal is ready in ${branchName}.`
+      );
+    }
+
+    async function setupListeners() {
+      unlistenAgentFinished = await listen<{ session_id: string; worktree_path: string }>(
+        "agent-finished",
+        (event) => {
+          const { session_id, worktree_path } = event.payload;
+          const timeout = idleTimeoutsRef.current.get(session_id);
+          if (timeout) {
+            clearTimeout(timeout);
+            idleTimeoutsRef.current.delete(session_id);
+          }
+          void triggerWaiting(session_id, worktree_path, true);
+        }
+      );
+
+      unlistenTerminalOutput = await listen<{ session_id: string; worktree_path: string; data: string }>(
+        "terminal-output",
+        (event) => {
+          const { session_id, worktree_path } = event.payload;
+          
+          // Mark as busy so we know it's worth notifying when it becomes idle
+          isBusyMapRef.current.set(session_id, true);
+
+          if (isWaitingMapRef.current.get(session_id)) {
+            setWorktreeWaitingState(worktree_path, false);
+            isWaitingMapRef.current.set(session_id, false);
+          }
+
+          const existingTimeout = idleTimeoutsRef.current.get(session_id);
+          if (existingTimeout) {
+            clearTimeout(existingTimeout);
+          }
+
+          const timeout = window.setTimeout(() => {
+            idleTimeoutsRef.current.delete(session_id);
+            void triggerWaiting(session_id, worktree_path);
+          }, 3000);
+
+          idleTimeoutsRef.current.set(session_id, timeout);
+        }
+      );
+    }
+
+    void setupListeners();
+
+    return () => {
+      if (unlistenAgentFinished) unlistenAgentFinished();
+      if (unlistenTerminalOutput) unlistenTerminalOutput();
+      idleTimeoutsRef.current.forEach(clearTimeout);
+    };
+  }, [setWorktreeWaitingState]);
 
   useEffect(() => {
     let active = true;
@@ -369,6 +556,7 @@ export function useAppState() {
     addRepository,
     removeRepository,
     selectWorktree,
+    setActiveSession,
     setWorktrees,
     clearNotification
   };

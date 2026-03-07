@@ -61,6 +61,7 @@ export default function Layout() {
     addRepository,
     removeRepository,
     selectWorktree,
+    setActiveSession,
     setWorktrees,
     clearNotification
   } = useAppState();
@@ -325,6 +326,7 @@ export default function Layout() {
           selectedWorktree={selectedWorktree}
           startupCommand={resolvedStartupCommand}
           startupConfigReady={startupConfigLoaded}
+          onSetActiveSession={setActiveSession}
         />
 
         <div

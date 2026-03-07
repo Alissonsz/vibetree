@@ -26,14 +26,16 @@ describe("appStateReducer", () => {
       path: "/tmp/repo",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     const secondWorktree: WorktreeInfo = {
       path: "/tmp/repo-feature",
       head: "def",
       branch: "feature",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     let state: AppState = appStateReducer(initialAppState, {
