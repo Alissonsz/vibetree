@@ -9,6 +9,7 @@ export type WorktreeInfo = {
   head: string;
   branch: string | null;
   is_bare: boolean;
+  is_waiting_for_user: boolean;
 };
 
 export type SelectionState = {

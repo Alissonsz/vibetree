@@ -50,7 +50,8 @@ describe("TerminalPane", () => {
       path: "/tmp/repo-a",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     render(
@@ -63,6 +64,7 @@ describe("TerminalPane", () => {
         selectedWorktree={worktree}
         startupCommand="opencode"
         startupConfigReady={true}
+        onSetActiveSession={vi.fn()}
       />
     );
 

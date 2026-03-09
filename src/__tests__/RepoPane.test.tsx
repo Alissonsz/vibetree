@@ -34,7 +34,8 @@ describe("RepoPane", () => {
       path: "/tmp/repo",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     const setRepoStartupCommand = vi.fn(async () => {
@@ -108,7 +109,8 @@ describe("RepoPane", () => {
       path: "/tmp/repo",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     const setRepoStartupCommand = vi.fn(
@@ -169,7 +171,8 @@ describe("RepoPane", () => {
       path: "/tmp/repo",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     render(
@@ -228,13 +231,15 @@ describe("RepoPane", () => {
       path: "/tmp/repo-1",
       head: "abc",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
     const worktree2: WorktreeInfo = {
       path: "/tmp/repo-2",
       head: "def",
       branch: "main",
-      is_bare: false
+      is_bare: false,
+      is_waiting_for_user: false
     };
 
     const baseProps = {
